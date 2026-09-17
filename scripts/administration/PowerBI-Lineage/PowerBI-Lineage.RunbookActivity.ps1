@@ -1,24 +1,25 @@
 ﻿# Power BI Report Lineage: paste this into a System Center Orchestrator "Run .NET Script" activity (PowerShell).
 #
 # Before you run it, copy PowerBI-Lineage.Orchestrator.ps1 to the runbook server and set ScriptPath to it.
-# Fill in the settings, or replace a value between its quotes with a subscription (right-click > Subscribe), for
+# Replace each Required-... placeholder with a value (a placeholder left in place counts as not filled in), and fill in
+# any optional settings you need. Or replace a value between its quotes with a subscription (right-click > Subscribe), for
 # example to an Initialize Data parameter, or to an encrypted variable for the client secret. Values must not contain
 # a single quote.
 
-# Where PowerBI-Lineage.Orchestrator.ps1 is on the runbook server
-$ScriptPath = 'C:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.ps1'
+# Where PowerBI-Lineage.Orchestrator.ps1 is on the runbook server, e.g. C:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.ps1
+$ScriptPath = 'Required-ScriptPath'
 
 # Tenant ID or domain, e.g. contoso.onmicrosoft.com
-$TenantId = ''
+$TenantId = 'Required-TenantId'
 
 # The service principal's application (client) ID
-$AppId = ''
+$AppId = 'Required-AppId'
 
-# The service principal's client secret. Leave empty to sign in with CertificateThumbprint instead.
-$ClientSecret = ''
+# The service principal's client secret. Or leave the placeholder and set CertificateThumbprint instead.
+$ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'
 
 # Workbook to write, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx. The JSON and run log are saved alongside it.
-$ExcelPath = ''
+$ExcelPath = 'Required-ExcelPath'
 
 # Admin = every workspace in the tenant (the default when empty); User = only workspaces the app belongs to
 $Mode = ''
@@ -36,7 +37,7 @@ $TimeoutMinutes = ''
 
 $ErrorActionPreference = 'Stop'
 
-$ScriptPath = "$ScriptPath".Trim()
+$ScriptPath = "$ScriptPath".Trim() -replace '^Required-.*$', ''
 if (-not $ScriptPath) { throw 'Set ScriptPath to where PowerBI-Lineage.Orchestrator.ps1 is on the runbook server.' }
 if ($ScriptPath -match '["<>|&^%*?]' -or $ScriptPath -notmatch '\.ps1$') { throw "ScriptPath is not a valid .ps1 path: $ScriptPath" }
 if (-not (Test-Path -LiteralPath $ScriptPath)) { throw "PowerBI-Lineage.Orchestrator.ps1 was not found at $ScriptPath on runbook server $env:COMPUTERNAME." }

@@ -12,6 +12,7 @@
 # This file is not meant to be pasted into the activity itself: at this size Orchestrator's script host cannot load it.
 # It can also be run directly with Windows PowerShell after typing the settings below. Settings left empty here are
 # read from the LINEAGE_* environment variables (and PBI_CLIENT_SECRET) that the runbook activity sets.
+# Replace each Required-... placeholder with a value; a placeholder left in place counts as not filled in.
 #
 # The tool's scripts are embedded below as plain text and unpacked to %ProgramData%\PowerBI-Lineage on first run.
 # It installs two PowerShell modules (MicrosoftPowerBIMgmt.Profile, ImportExcel) for the running account if missing.
@@ -19,16 +20,16 @@
 # ======================================================================================================================
 
 # Tenant ID or domain, e.g. contoso.onmicrosoft.com
-$TenantId = ''
+$TenantId = 'Required-TenantId'
 
 # The service principal's application (client) ID
-$AppId = ''
+$AppId = 'Required-AppId'
 
-# The service principal's client secret. Leave empty to sign in with CertificateThumbprint instead.
-$ClientSecret = ''
+# The service principal's client secret. Or leave the placeholder and set CertificateThumbprint instead.
+$ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'
 
 # Workbook to write, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx. The JSON and run log are saved alongside it.
-$ExcelPath = ''
+$ExcelPath = 'Required-ExcelPath'
 
 # Admin = every workspace in the tenant (the default when empty); User = only workspaces the app belongs to
 $Mode = ''
@@ -54,15 +55,16 @@ function Stop-Run([string] $Message) {
 }
 
 function Get-Setting([string] $Typed, [string] $EnvironmentName) {
-    $value = "$Typed".Trim()
-    if (-not $value) { $value = "$([Environment]::GetEnvironmentVariable($EnvironmentName))".Trim() }
+    # A Required-... placeholder that was not replaced counts as empty.
+    $value = "$Typed".Trim() -replace '^Required-.*$', ''
+    if (-not $value) { $value = "$([Environment]::GetEnvironmentVariable($EnvironmentName))".Trim() -replace '^Required-.*$', '' }
     $value
 }
 
 function Assert-Setting([string] $Name, [string] $Value, [string] $Pattern, [switch] $Optional) {
     if (-not $Value) {
         if ($Optional) { return }
-        Stop-Run "The setting $Name is required."
+        Stop-Run "The setting $Name is required: replace its Required-... placeholder with a value."
     }
     if ($Value -notmatch $Pattern) { Stop-Run "The setting $Name has an invalid value: $Value" }
 }

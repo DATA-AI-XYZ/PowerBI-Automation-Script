@@ -141,13 +141,14 @@ If you downloaded it from GitHub, unblock it: right-click the file, choose **Pro
 2. Add a **Run .NET Script** activity (in **System**).
 3. On its **Details** tab, set the language to **PowerShell**.
 4. Open `PowerBI-Lineage.RunbookActivity.ps1`, copy all of it, and paste it into the **Script** box.
-5. Fill in the settings at the top of the script:
+5. Fill in the settings at the top of the script. Required settings start with placeholder text such as
+   `'Required-TenantId'`: replace each placeholder with your value. Optional settings start empty.
 
    ```powershell
    $ScriptPath = 'C:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.ps1'  # where you copied the tool in step 1
    $TenantId = 'contoso.onmicrosoft.com'                # tenant ID or domain
    $AppId = '00000000-0000-0000-0000-000000000000'      # the service principal's application (client) ID
-   $ClientSecret = ''                                    # see "Keep the client secret safe" below
+   $ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'  # see "Keep the client secret safe" below
    $ExcelPath = '\\fileserver\bi\PowerBI-Lineage.xlsx'  # the JSON and a run log are saved alongside
    $Mode = ''                                            # optional: Admin (default, whole tenant) or User
    $WorkspaceIds = ''                                    # optional: comma-separated workspace IDs
@@ -169,11 +170,11 @@ The activity **fails**, with the reason in its error summary, when the run fails
 A secret typed into the script is stored in the Orchestrator database in plain text. Instead:
 
 1. Create a **Variable** in Runbook Designer, tick **Encrypted variable**, and enter the secret.
-2. In the pasted script, click between the quotes of `$ClientSecret = ''`, right-click, choose
+2. In the pasted script, select the placeholder text between the quotes of `$ClientSecret`, right-click, choose
    **Subscribe > Variable**, and pick it.
 3. Keep activity-specific logging off for this runbook.
 
-Or leave `$ClientSecret` empty and use a certificate: install it with its private key in **LocalMachine\My** on the
+Or leave `$ClientSecret` as its placeholder and use a certificate: install it with its private key in **LocalMachine\My** on the
 runbook server, give the Orchestrator Runbook Service account read access to the private key, and set
 `$CertificateThumbprint`.
 
@@ -275,6 +276,6 @@ sheet.
 | "Unattended runs sign in as a service principal" | Pass `-TenantId` and `-ClientId` with `-CertificateThumbprint`, or set `PBI_CLIENT_SECRET`. |
 | "Error initializing extension" in Orchestrator | The large `PowerBI-Lineage.Orchestrator.ps1` was pasted into the activity. Copy it to the runbook server instead, and paste `PowerBI-Lineage.RunbookActivity.ps1` into the activity ([section 3](#3-run-it-in-system-center-orchestrator)). |
 | "PowerBI-Lineage.Orchestrator.ps1 was not found at ..." | Copy the tool file to that path on the runbook server named in the message, or correct `$ScriptPath`. |
-| "The setting ... is required" or "has an invalid value" | Orchestrator: check the settings at the top of the activity script. `$AppId` must be a GUID and `$ExcelPath` must end in `.xlsx`. |
+| "The setting ... is required" or "has an invalid value" | Orchestrator: check the settings at the top of the activity script, and replace every `Required-...` placeholder. `$AppId` must be a GUID and `$ExcelPath` must end in `.xlsx`. |
 | The window closes at once, or scripts are blocked | Group Policy or AppLocker blocks PowerShell scripts. Ask IT. |
 
