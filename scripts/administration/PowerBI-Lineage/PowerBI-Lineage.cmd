@@ -89,18 +89,65 @@ return
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Makes sure the PowerShell modules a script needs are present, installing them for the current user if not.
+    Makes sure the PowerShell modules a script needs are present, installing them for the current user only if not.
 
 .DESCRIPTION
-    Installs into the current user's module folder, so no administrator rights are needed. Works in Windows
-    PowerShell 5.1 (bootstrapping the NuGet provider and TLS 1.2 it needs to reach the PowerShell Gallery) and in
-    PowerShell 7.
+    A module that is already installed is used as it is, never installed again. It is looked for in this
+    PowerShell's module folders first, then in the module folders of the other Windows PowerShell (32-bit or 64-bit),
+    so a module installed for one of them, e.g. for a System Center Orchestrator runbook, is found by the other.
+
+    Only a module found nowhere is installed, into the current user's module folder, so no administrator rights are
+    needed. Works in Windows PowerShell 5.1 (bootstrapping the NuGet provider and TLS 1.2 it needs to reach the
+    PowerShell Gallery) and in PowerShell 7.
 #>
+
+function Get-OtherModuleFolder {
+    # Windows PowerShell module folders for all users and the current user, in both 64-bit and 32-bit form.
+    if (-not $env:SystemRoot) { return }
+    $documents = [Environment]::GetFolderPath('MyDocuments')
+    $programFiles = @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
+    $folders = @(
+        foreach ($root in $programFiles) { Join-Path $root 'WindowsPowerShell\Modules' }
+        foreach ($system in 'System32', 'Sysnative', 'SysWOW64') { Join-Path $env:SystemRoot "$system\WindowsPowerShell\v1.0\Modules" }
+        if ($documents) { Join-Path $documents 'WindowsPowerShell\Modules' }
+    )
+    $folders | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique
+}
+
+function Add-OtherModuleFolder {
+    # Appends the folders this PowerShell does not already search, for this process only. Returns $true if any were added.
+    $current = @($env:PSModulePath -split ';' | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') })
+    $added = @(Get-OtherModuleFolder | Where-Object { $current -notcontains $_.TrimEnd('\') })
+    if ($added.Count -eq 0) { return $false }
+    $env:PSModulePath = (@($current) + $added) -join ';'
+    $true
+}
+
+function Find-RequiredModule {
+    <#
+    .SYNOPSIS
+        Returns the newest installed copy of a module (at least MinimumVersion), or nothing if it is not installed.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string] $Name,
+        [version] $MinimumVersion
+    )
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        $found = Get-Module -ListAvailable -Name $Name |
+            Where-Object { -not $MinimumVersion -or $_.Version -ge $MinimumVersion } |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+        if ($found) { return $found }
+        # Not in this PowerShell's folders: look in the other Windows PowerShell's folders once.
+        if ($attempt -eq 1 -and -not (Add-OtherModuleFolder)) { return }
+    }
+}
 
 function Initialize-RequiredModule {
     <#
     .SYNOPSIS
-        Imports a module, installing it from the PowerShell Gallery for the current user first if it is missing.
+        Imports a module. Installs it from the PowerShell Gallery for the current user first, only if it is not installed.
     .EXAMPLE
         Initialize-RequiredModule -Name ImportExcel
     #>
@@ -109,11 +156,7 @@ function Initialize-RequiredModule {
         [Parameter(Mandatory)][string] $Name,
         [version] $MinimumVersion
     )
-    $available = Get-Module -ListAvailable -Name $Name |
-        Where-Object { -not $MinimumVersion -or $_.Version -ge $MinimumVersion } |
-        Select-Object -First 1
-
-    if (-not $available) {
+    if (-not (Find-RequiredModule -Name $Name -MinimumVersion $MinimumVersion)) {
         Write-Information "Installing the $Name PowerShell module for your user account (first run only)..."
         $ProgressPreference = 'SilentlyContinue'
         try {
@@ -131,9 +174,11 @@ function Initialize-RequiredModule {
             Install-Module @install
         }
         catch {
-            throw ("Could not install the $Name module automatically: $($_.Exception.Message)`n" +
-                "If the PowerShell Gallery is blocked on this network, ask IT to allow it or to install the module, " +
-                "or run: Install-Module $Name -Scope CurrentUser")
+            $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+            throw ("The $Name module is not installed on $env:COMPUTERNAME for $account, and installing it from the " +
+                "PowerShell Gallery failed: $($_.Exception.Message) " +
+                "Install it once for all users in an elevated Windows PowerShell: Install-Module $Name -Scope AllUsers " +
+                "(or ask IT to allow powershellgallery.com, or to install it).")
         }
     }
 
@@ -142,7 +187,7 @@ function Initialize-RequiredModule {
     Import-Module @import
 }
 
-Export-ModuleMember -Function Initialize-RequiredModule
+Export-ModuleMember -Function Find-RequiredModule, Initialize-RequiredModule
 #==== FILE: src/modules/PowerBIRest.psm1 ====
 #Requires -Version 5.1
 <#
@@ -2360,7 +2405,7 @@ try {
     $required = @('MicrosoftPowerBIMgmt.Profile')
     if (-not $SkipExcel) { $required += 'ImportExcel' }
     foreach ($name in $required) {
-        if (-not (Get-Module -ListAvailable -Name $name)) { Update-RunStep "installing $name (first run only)" -Force }
+        if (-not (Find-RequiredModule -Name $name)) { Update-RunStep "installing $name (first run only)" -Force }
         Initialize-RequiredModule -Name $name
     }
     Complete-RunStep
