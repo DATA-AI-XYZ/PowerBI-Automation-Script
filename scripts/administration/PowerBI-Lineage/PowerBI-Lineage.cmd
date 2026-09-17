@@ -1327,7 +1327,7 @@ Parameters:
   -ExcelPath <file.xlsx>         Workbook to write (replaced if it exists).
   -OutputPath <folder>           Folder for the JSON. Default: the Excel file's folder, or Documents\Power BI Lineage.
   -WorkspaceId <id>,<id>         Only these workspaces.
-  -SkipExcel                     JSON only.
+  -SkipExcel                     JSON and CSV only.
   -IncludePersonalWorkspaces, -IncludeAutoDateTables, -SkipGatewayLookup, -SaveRawResponses,
   -ScanBatchSize <1-100>, -Verbose
 '@
@@ -1376,6 +1376,8 @@ Export-ModuleMember -Function ConvertFrom-LauncherArgument, Get-LauncherUsage
       report-lineage.json  Everything collected, untruncated: run details, one lineage row per
                            report x table x source object, the source-object view, and every semantic model
                            with its tables, M expressions and data sources. Written first.
+      report-lineage.csv   The lineage rows (the All Lineage sheet) untruncated, named after the workbook and
+                           saved next to it.
       report-lineage.xlsx  Built from the JSON by Export-PbiLineageWorkbook.ps1: a Summary sheet, an
                            All Lineage sheet, a Source Objects sheet and one sheet per workspace.
 
@@ -2138,6 +2140,9 @@ function New-LineageRow {
     $row.GatewayDatasourceId = if ($gatewayId) { $datasourceId } else { '' }
     $row.GatewayDatasourceName = Get-GatewayDatasourceName $gatewayId $datasourceId
     $row.ConnectionDetails = if ($details) { $details | ConvertTo-Json -Compress -Depth 4 } else { '' }
+    # Y when anything about the connection mentions Snowflake, including ODBC connections to it.
+    $isSnowflake = @($row.SourceType, $row.Connector, $row.Server, $row.DatasourceType, $row.ConnectionDetails) -match 'snowflake'
+    $row.IsSnowflakeConnection = if ($isSnowflake) { 'Y' } else { 'N' }
     $row.Notes = $Notes
     $row.SourceExpression = $expression
     [pscustomobject]$row
@@ -2417,12 +2422,22 @@ try {
     $document = New-LineageDocument $rows $model $effectiveMode
     $jsonPath = Join-Path $runFolder 'report-lineage.json'
     ConvertTo-Json -InputObject $document -Depth 20 | Set-Content -Path $jsonPath -Encoding utf8
+
+    # The All Lineage rows as CSV, untruncated, named after the workbook and saved next to it.
+    $csvPath = [System.IO.Path]::ChangeExtension($(if ($ExcelPath) { $ExcelPath } else { Join-Path $runFolder 'report-lineage.xlsx' }), '.csv')
+    $csvFolder = Split-Path -Parent ([System.IO.Path]::GetFullPath($csvPath))
+    if (-not (Test-Path -LiteralPath $csvFolder)) { $null = New-Item -ItemType Directory -Path $csvFolder -Force }
+    # UTF-8 with a byte order mark, so Excel opens names with accents correctly.
+    $csvEncoding = if ($PSVersionTable.PSVersion.Major -ge 6) { 'utf8BOM' } else { 'UTF8' }
+    $csvRows = if ($rows.Count -gt 0) { $rows } else { [pscustomobject]@{} }
+    $csvRows | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding $csvEncoding
+
     if (-not $SkipExcel) {
         Update-RunStep 'building the Excel workbook' -Force
         if (-not $ExcelPath) { $ExcelPath = Join-Path $runFolder 'report-lineage.xlsx' }
         $workbook = & (Join-Path $PSScriptRoot 'Export-PbiLineageWorkbook.ps1') -JsonPath $jsonPath -ExcelPath $ExcelPath -Force
     }
-    Complete-RunStep $(if ($SkipExcel) { 'done, JSON' } else { 'done, JSON and Excel' })
+    Complete-RunStep $(if ($SkipExcel) { 'done, JSON and CSV' } else { 'done, JSON, CSV and Excel' })
 }
 catch {
     Stop-RunStep
@@ -2451,6 +2466,7 @@ if ($workbook) {
     Write-RunMessage ''
 }
 if (-not $SkipExcel) { Write-RunMessage "  Excel: $ExcelPath" }
+Write-RunMessage "  CSV:   $csvPath"
 Write-RunMessage "  JSON:  $jsonPath"
 Write-RunMessage ''
 
@@ -2534,7 +2550,7 @@ $script:ColumnTypes = @{
 $script:ColumnWidths = @{
     WorkspaceName = 24; ReportName = 30; DatasetName = 28; DatasetWorkspaceName = 24; TableName = 26
     SourceType = 22; Connector = 20; Server = 34; Database = 24; Schema = 14; SourceObject = 30; Location = 40
-    GatewayName = 24; GatewayDatasourceName = 24; ConnectionDetails = 40; NativeQuery = 50; Notes = 60
+    GatewayName = 24; GatewayDatasourceName = 24; ConnectionDetails = 40; IsSnowflakeConnection = 22; NativeQuery = 50; Notes = 60
     SourceExpression = 60; Reports = 60; ModelTables = 60; Gateways = 24; Area = 18; Item = 36; Message = 100
 }
 
@@ -2544,7 +2560,7 @@ $script:DefaultLineageColumns = @(
     'DatasetWorkspaceName', 'DatasetWorkspaceId', 'DatasetStorageMode', 'TableName', 'TableIsHidden',
     'TableStorageMode', 'SourceType', 'Connector', 'Server', 'Database', 'Schema', 'SourceObject',
     'SourceObjectKind', 'ObjectOrigin', 'Location', 'ConnectorOptions', 'NativeQuery', 'DatasourceType',
-    'GatewayId', 'GatewayName', 'GatewayDatasourceId', 'GatewayDatasourceName', 'ConnectionDetails', 'Notes',
+    'GatewayId', 'GatewayName', 'GatewayDatasourceId', 'GatewayDatasourceName', 'ConnectionDetails', 'IsSnowflakeConnection', 'Notes',
     'SourceExpression')
 $script:DefaultSourceObjectColumns = @(
     'SourceType', 'Server', 'Database', 'Schema', 'SourceObject', 'Location', 'Gateways', 'ReportCount',

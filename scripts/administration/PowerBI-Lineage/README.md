@@ -66,7 +66,7 @@ permissions that need admin consent.
   [1/8] Checking prerequisites ............... done
   [2/8] Signing in ........................... done, User peter@contoso.com
   ...
-  [8/8] Saving results ....................... done, JSON and Excel
+  [8/8] Saving results ....................... done, JSON, CSV and Excel
 ```
 
 Nothing needs installing first:
@@ -109,7 +109,7 @@ PowerBI-Lineage.cmd -Mode Admin -TenantId contoso.onmicrosoft.com -ClientId <app
 
 The JSON is saved in a `report-lineage-<date>` folder next to the workbook. `PowerBI-Lineage.cmd /?` lists every
 option, including
-`-WorkspaceId <id>,<id>` to limit the run and `-SkipExcel` for JSON only.
+`-WorkspaceId <id>,<id>` to limit the run and `-SkipExcel` for JSON and CSV only.
 
 On the machine that runs the job:
 
@@ -161,7 +161,7 @@ If you downloaded it from GitHub, unblock it: right-click the file, choose **Pro
 6. Select **Finish**, check the runbook in, and run it.
 
 The activity **succeeds** when the run succeeds. In the `$ExcelPath` folder you then find the workbook, a run log
-named after it (`PowerBI-Lineage.log` for `PowerBI-Lineage.xlsx`), and a `report-lineage-<date>` folder with the JSON.
+and CSV named after it (`PowerBI-Lineage.log` and `PowerBI-Lineage.csv` for `PowerBI-Lineage.xlsx`), and a `report-lineage-<date>` folder with the JSON.
 The activity **fails**, with the reason in its error summary, when the run fails; the full detail is in the run log.
 
 ### Keep the client secret safe
@@ -214,6 +214,7 @@ also appears in the job's run history, so subscribe an encrypted variable instea
 |---|---|
 | `*.xlsx` | The workbook (sheets below). |
 | `report-lineage.json` | Everything collected, untruncated, in a `report-lineage-<date>` folder next to the workbook. |
+| `*.csv` | The All Lineage rows as CSV, named after the workbook and saved next to it. Nothing is cut short, and it opens directly in Excel. |
 | `*.log` | Orchestrator runs only: the run's output, named after the workbook. |
 
 | Sheet | Contents |
@@ -226,7 +227,7 @@ also appears in the job's run history, so subscribe an encrypted variable instea
 
 Main columns: `WorkspaceName`, `ReportName`, `DatasetName` (the semantic model), `TableName`, `SourceType`,
 `Server`, `Database`, `Schema`, `SourceObject`, `Location` (files and URLs), `NativeQuery`, `GatewayName`,
-`ConnectionDetails`, `ObjectOrigin`, `Notes` and `SourceExpression` (the Power Query code the source was read from).
+`ConnectionDetails`, `IsSnowflakeConnection` (`Y` when the source type, server or connection details mention Snowflake, including ODBC connections to it), `ObjectOrigin`, `Notes` and `SourceExpression` (the Power Query code the source was read from).
 IDs sit next to each name.
 
 Excel holds at most 32,767 characters per cell. A longer query is cut in the workbook, marked, and counted on the
