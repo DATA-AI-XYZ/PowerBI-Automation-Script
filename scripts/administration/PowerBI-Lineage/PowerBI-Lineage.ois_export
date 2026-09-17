@@ -18,7 +18,8 @@ $AppId = '\`d.T.~Ed/{D52B175F-ED7D-15D3-EFE3-D77206D79816}.{BABE86C6-7B33-9333-E
 # The service principal's client secret. Or leave the placeholder and set CertificateThumbprint instead.&#xD;
 $ClientSecret = '\`d.T.~Ed/{D52B175F-ED7D-15D3-EFE3-D77206D79816}.{B4BF7557-8B29-12DA-A5C6-80CF7370CF88}\`d.T.~Ed/'&#xD;
 &#xD;
-# Workbook to write, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx. The JSON and run log are saved alongside it.&#xD;
+# Folder for the workbook, e.g. \\fileserver\bi: each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (local date and time).&#xD;
+# Or a .xlsx file, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx, replaced on every run. The CSV, run log and JSON go alongside.&#xD;
 $ExcelPath = '\`d.T.~Ed/{D52B175F-ED7D-15D3-EFE3-D77206D79816}.{B2434BF0-0E5A-F563-2005-D7D31FF088B2}\`d.T.~Ed/'&#xD;
 &#xD;
 # Admin = every workspace in the tenant (the default when empty); User = only workspaces the app belongs to&#xD;

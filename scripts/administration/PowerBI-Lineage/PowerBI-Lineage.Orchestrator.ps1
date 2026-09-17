@@ -28,7 +28,8 @@ $AppId = 'Required-AppId'
 # The service principal's client secret. Or leave the placeholder and set CertificateThumbprint instead.
 $ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'
 
-# Workbook to write, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx. The JSON and run log are saved alongside it.
+# Folder for the workbook, e.g. \\fileserver\bi: each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (local date and time).
+# Or a .xlsx file, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx, replaced on every run. The CSV, run log and JSON go alongside.
 $ExcelPath = 'Required-ExcelPath'
 
 # Admin = every workspace in the tenant (the default when empty); User = only workspaces the app belongs to
@@ -81,7 +82,12 @@ try {
 
     Assert-Setting 'TenantId' $TenantId '^[A-Za-z0-9.-]+$'
     Assert-Setting 'AppId' $AppId '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
-    Assert-Setting 'ExcelPath' $ExcelPath '^[^"<>|*?]+\.xlsx$'
+    Assert-Setting 'ExcelPath' $ExcelPath '^[^"<>|*?]+$'
+    if ($ExcelPath -notmatch '\.xlsx$') {
+        if ((Split-Path -Leaf $ExcelPath) -match '\.[A-Za-z]{2,5}$') { Stop-Run "The setting ExcelPath must be a folder or a .xlsx file: $ExcelPath" }
+        # A folder: name the workbook after this run, so the CSV and log below share its name.
+        $ExcelPath = Join-Path $ExcelPath ('PowerBI-Lineage_{0:ddMMyyHHmm}.xlsx' -f (Get-Date))
+    }
     Assert-Setting 'Mode' $Mode '^(Admin|User|Auto)$' -Optional
     Assert-Setting 'WorkspaceIds' $WorkspaceIds '^[0-9A-Fa-f-]{36}(,[0-9A-Fa-f-]{36})*$' -Optional
     Assert-Setting 'CertificateThumbprint' $CertificateThumbprint '^[0-9A-Fa-f]{40}$' -Optional
@@ -1340,7 +1346,7 @@ Parameters:
   -TenantId, -ClientId           Service principal. Secret from PBI_CLIENT_SECRET, or use:
   -CertificateThumbprint         Certificate in the CurrentUser or LocalMachine personal store.
   -ConfigPath <file>             config.json with tenantId and servicePrincipal settings.
-  -ExcelPath <file.xlsx>         Workbook to write (replaced if it exists).
+  -ExcelPath <folder|file.xlsx>  Folder: writes PowerBI-Lineage_DDMMYYHHMM.xlsx. File: replaced each run.
   -OutputPath <folder>           Folder for the JSON. Default: the Excel file's folder, or Documents\Power BI Lineage.
   -WorkspaceId <id>,<id>         Only these workspaces.
   -SkipExcel                     JSON and CSV only.
@@ -1411,8 +1417,9 @@ Export-ModuleMember -Function ConvertFrom-LauncherArgument, Get-LauncherUsage
     inside the tool folder.
 
 .PARAMETER ExcelPath
-    Where to write the Excel workbook. Defaults to report-lineage.xlsx next to the JSON. An existing file at
-    this path is replaced.
+    Where to write the Excel workbook: a folder, where each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (the run's
+    local date and time), or a .xlsx file, which is replaced on every run. The CSV is named after the workbook.
+    Defaults to report-lineage.xlsx next to the JSON.
 
 .PARAMETER SkipExcel
     Write the JSON only, e.g. where the ImportExcel module is not installed. Build the workbook later with
@@ -1654,11 +1661,10 @@ function Read-InteractiveOption {
     $script:Mode = if ($scope -eq 1) { 'Admin' } else { 'User' }
 
     $folder = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Power BI Lineage'
-    $default = Join-Path $folder ('PowerBI-Lineage-{0:yyyyMMdd-HHmm}.xlsx' -f (Get-Date))
+    $default = Resolve-ExcelPath $folder
     Write-Host ''
     $answer = (Read-Host "Save the Excel file to (Enter = $default)").Trim().Trim('"')
-    $script:ExcelPath = if ($answer) { $answer } else { $default }
-    if ($script:ExcelPath -notmatch '\.xlsx$') { $script:ExcelPath = Join-Path $script:ExcelPath ('PowerBI-Lineage-{0:yyyyMMdd-HHmm}.xlsx' -f (Get-Date)) }
+    $script:ExcelPath = if ($answer) { Resolve-ExcelPath $answer } else { $default }
     $script:OutputPath = Split-Path -Parent ([System.IO.Path]::GetFullPath($script:ExcelPath))
     Write-Host ''
 }
@@ -2346,7 +2352,17 @@ function Format-Count {
     '{0:N0} {1}' -f $Count, $(if ($Count -eq 1) { $Singular } else { $Plural })
 }
 
+function Resolve-ExcelPath {
+    # A folder gets a workbook named after the run's local date and time; a .xlsx path is used as given.
+    param([string] $Path)
+    $Path = $Path.Trim().Trim('"')
+    if ($Path -match '\.xlsx$') { return $Path }
+    if ((Split-Path -Leaf $Path) -match '\.[A-Za-z]{2,5}$') { throw "ExcelPath must be a folder or a .xlsx file: $Path" }
+    Join-Path $Path ('PowerBI-Lineage_{0:ddMMyyHHmm}.xlsx' -f (Get-Date))
+}
+
 if ($Interactive -and $Unattended) { throw '-Interactive and -Unattended cannot be used together.' }
+if ($ExcelPath) { $ExcelPath = Resolve-ExcelPath $ExcelPath }
 if ($Unattended -and -not $PSBoundParameters.ContainsKey('OutputPath')) {
     # The default output folder sits inside the script's own folder, which PowerBI-Lineage.cmd replaces on update.
     $OutputPath = if ($ExcelPath) {

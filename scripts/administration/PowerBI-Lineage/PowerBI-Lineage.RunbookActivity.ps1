@@ -18,7 +18,8 @@ $AppId = 'Required-AppId'
 # The service principal's client secret. Or leave the placeholder and set CertificateThumbprint instead.
 $ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'
 
-# Workbook to write, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx. The JSON and run log are saved alongside it.
+# Folder for the workbook, e.g. \\fileserver\bi: each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (local date and time).
+# Or a .xlsx file, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx, replaced on every run. The CSV, run log and JSON go alongside.
 $ExcelPath = 'Required-ExcelPath'
 
 # Admin = every workspace in the tenant (the default when empty); User = only workspaces the app belongs to

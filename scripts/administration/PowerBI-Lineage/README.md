@@ -59,7 +59,7 @@ permissions that need admin consent.
    - **How to sign in:** your own account (a sign-in window opens), or a service principal with a client secret
      or certificate.
    - **Which reports:** every workspace in the tenant, or only workspaces you are a member of.
-   - **Where to save the workbook:** press Enter for `Documents\Power BI Lineage`, or type a path.
+   - **Where to save the workbook:** press Enter for `Documents\Power BI Lineage`, or type a folder or a `.xlsx` file. In a folder the workbook is named `PowerBI-Lineage_DDMMYYHHMM.xlsx`, after the date and time of the run.
 4. Watch the eight numbered steps complete, then open the workbook when asked.
 
 ```
@@ -96,7 +96,7 @@ exit code `0` on success or `1` on failure, with the reason on the error output.
 **With a certificate** (installed for the account the job runs as):
 
 ```bat
-PowerBI-Lineage.cmd -Mode Admin -TenantId contoso.onmicrosoft.com -ClientId <app-id> -CertificateThumbprint <thumbprint> -ExcelPath "\\fileserver\bi\PowerBI-Lineage.xlsx"
+PowerBI-Lineage.cmd -Mode Admin -TenantId contoso.onmicrosoft.com -ClientId <app-id> -CertificateThumbprint <thumbprint> -ExcelPath "\\fileserver\bi"
 ```
 
 **With a client secret:** the secret is never accepted on the command line, where job logs and process lists could
@@ -104,10 +104,17 @@ show it. Have the scheduler set the `PBI_CLIENT_SECRET` environment variable fro
 
 ```bat
 set PBI_CLIENT_SECRET=<secret>
-PowerBI-Lineage.cmd -Mode Admin -TenantId contoso.onmicrosoft.com -ClientId <app-id> -ExcelPath "\\fileserver\bi\PowerBI-Lineage.xlsx"
+PowerBI-Lineage.cmd -Mode Admin -TenantId contoso.onmicrosoft.com -ClientId <app-id> -ExcelPath "\\fileserver\bi"
 ```
 
-The JSON is saved in a `report-lineage-<date>` folder next to the workbook. `PowerBI-Lineage.cmd /?` lists every
+`-ExcelPath` takes a folder or a file:
+
+- **A folder**, e.g. `"\\fileserver\bi"`: each run writes a new workbook named after its local date and time,
+  `PowerBI-Lineage_DDMMYYHHMM.xlsx` (a run at 15:45 on 17 September 2026 writes `PowerBI-Lineage_1709261545.xlsx`).
+  Earlier runs are kept.
+- **A `.xlsx` file**, e.g. `"\\fileserver\bi\PowerBI-Lineage.xlsx"`: the same file is replaced on every run.
+
+The CSV is named after the workbook, and the JSON is saved in a `report-lineage-<date>` folder next to it. `PowerBI-Lineage.cmd /?` lists every
 option, including
 `-WorkspaceId <id>,<id>` to limit the run and `-SkipExcel` for JSON and CSV only.
 
@@ -149,7 +156,7 @@ If you downloaded it from GitHub, unblock it: right-click the file, choose **Pro
    $TenantId = 'contoso.onmicrosoft.com'                # tenant ID or domain
    $AppId = '00000000-0000-0000-0000-000000000000'      # the service principal's application (client) ID
    $ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'  # see "Keep the client secret safe" below
-   $ExcelPath = '\\fileserver\bi\PowerBI-Lineage.xlsx'  # the JSON and a run log are saved alongside
+   $ExcelPath = '\\fileserver\bi'                        # folder: PowerBI-Lineage_DDMMYYHHMM.xlsx each run; or a .xlsx file
    $Mode = ''                                            # optional: Admin (default, whole tenant) or User
    $WorkspaceIds = ''                                    # optional: comma-separated workspace IDs
    $CertificateThumbprint = ''                           # optional: use a certificate instead of a secret
@@ -162,7 +169,9 @@ If you downloaded it from GitHub, unblock it: right-click the file, choose **Pro
 6. Select **Finish**, check the runbook in, and run it.
 
 The activity **succeeds** when the run succeeds. In the `$ExcelPath` folder you then find the workbook, a run log
-and CSV named after it (`PowerBI-Lineage.log` and `PowerBI-Lineage.csv` for `PowerBI-Lineage.xlsx`), and a `report-lineage-<date>` folder with the JSON.
+and CSV named after it (for example `PowerBI-Lineage_1709261545.xlsx`, `.log` and `.csv`), and a
+`report-lineage-<date>` folder with the JSON. `$ExcelPath` works as for [unattended runs](#2-run-it-unattended): a folder
+gets a new dated workbook each run, and a `.xlsx` file is replaced each run.
 The activity **fails**, with the reason in its error summary, when the run fails; the full detail is in the run log.
 
 ### Keep the client secret safe
@@ -276,6 +285,6 @@ sheet.
 | "Unattended runs sign in as a service principal" | Pass `-TenantId` and `-ClientId` with `-CertificateThumbprint`, or set `PBI_CLIENT_SECRET`. |
 | "Error initializing extension" in Orchestrator | The large `PowerBI-Lineage.Orchestrator.ps1` was pasted into the activity. Copy it to the runbook server instead, and paste `PowerBI-Lineage.RunbookActivity.ps1` into the activity ([section 3](#3-run-it-in-system-center-orchestrator)). |
 | "PowerBI-Lineage.Orchestrator.ps1 was not found at ..." | Copy the tool file to that path on the runbook server named in the message, or correct `$ScriptPath`. |
-| "The setting ... is required" or "has an invalid value" | Orchestrator: check the settings at the top of the activity script, and replace every `Required-...` placeholder. `$AppId` must be a GUID and `$ExcelPath` must end in `.xlsx`. |
+| "The setting ... is required" or "has an invalid value" | Orchestrator: check the settings at the top of the activity script, and replace every `Required-...` placeholder. `$AppId` must be a GUID and `$ExcelPath` must be a folder or end in `.xlsx`. |
 | The window closes at once, or scripts are blocked | Group Policy or AppLocker blocks PowerShell scripts. Ask IT. |
 
