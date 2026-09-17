@@ -1,0 +1,6 @@
+# Stored byte-for-byte: GitHub serves the stored bytes on download, a .cmd with Unix line endings can
+# misbehave, and generated files must match their build exactly.
+*.cmd -text
+*.bat -text
+*.ois_export -text
+*.Orchestrator.ps1 -text
