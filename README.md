@@ -1,7 +1,7 @@
 # Power BI Automation Scripts
 
-Ready-to-run PowerShell tools for **Power BI administrators**. Each tool is a single file you download and run: on your
-desktop, on a schedule, or in System Center Orchestrator. There's nothing to install first, and it runs on the PowerShell
+Ready-to-run PowerShell tools for **Power BI administrators**. Each tool is a single file you download and run on your
+desktop or on a schedule, plus a pair of files for System Center Orchestrator. There's nothing to install first, and it runs on the PowerShell
 built into Windows.
 
 ---
@@ -10,7 +10,7 @@ built into Windows.
 
 | Tool | Answers | Download |
 |---|---|---|
-| [**Power BI Report Lineage**](scripts/administration/PowerBI-Lineage/) | Which database, schema and table feeds every Power BI report, through which semantic model, table and gateway. Produces an Excel workbook with a sheet per workspace. | Desktop or scheduled: [`PowerBI-Lineage.cmd`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.cmd)<br>System Center Orchestrator: [`PowerBI-Lineage.Orchestrator.ps1`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.Orchestrator.ps1) |
+| [**Power BI Report Lineage**](scripts/administration/PowerBI-Lineage/) | Which database, schema and table feeds every Power BI report, through which semantic model, table and gateway. Produces an Excel workbook with a sheet per workspace. | Desktop or scheduled: [`PowerBI-Lineage.cmd`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.cmd)<br>System Center Orchestrator: [`PowerBI-Lineage.Orchestrator.ps1`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.Orchestrator.ps1) (copy to the server) and [`PowerBI-Lineage.RunbookActivity.ps1`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.RunbookActivity.ps1) (paste into the runbook) |
 
 ---
 

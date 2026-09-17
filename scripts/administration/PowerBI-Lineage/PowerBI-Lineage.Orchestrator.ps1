@@ -1,18 +1,21 @@
 ﻿# ======================================================================================================================
-# Power BI Report Lineage for System Center Orchestrator: one self-contained script
+# Power BI Report Lineage: the tool, in one file, for System Center Orchestrator runbook servers
 #
 # Traces every Power BI report to its semantic model, tables, and the database server, database, schema and table
 # behind them, and writes an Excel workbook, a JSON file and a run log.
 #
-# Use it in either of these ways:
-#   - Runbook Designer: paste the whole script into a "Run .NET Script" activity (Language: PowerShell). Type the
-#     settings below, or replace a value between its quotes with a subscription (right-click > Subscribe >
-#     Published Data), e.g. to an Initialize Data parameter or an encrypted variable for the secret.
-#   - Any Windows machine: fill in the settings and run it with Windows PowerShell.
+# How to use it:
+#   1. Copy this file to the runbook server, e.g. C:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.ps1.
+#   2. Paste PowerBI-Lineage.RunbookActivity.ps1 into a "Run .NET Script" activity and fill in its settings.
+#      That small script starts this file in 64-bit Windows PowerShell and passes the settings to it.
 #
-# Values must not contain a single quote ('). Nothing else needs to be installed first: the tool's scripts are
-# embedded below and are unpacked to %ProgramData%\PowerBI-Lineage on first run. It installs two PowerShell modules
-# (MicrosoftPowerBIMgmt.Profile, ImportExcel) for the running account if they are missing.
+# This file is not meant to be pasted into the activity itself: at this size Orchestrator's script host cannot load it.
+# It can also be run directly with Windows PowerShell after typing the settings below. Settings left empty here are
+# read from the LINEAGE_* environment variables (and PBI_CLIENT_SECRET) that the runbook activity sets.
+#
+# The tool's scripts are embedded below as plain text and unpacked to %ProgramData%\PowerBI-Lineage on first run.
+# It installs two PowerShell modules (MicrosoftPowerBIMgmt.Profile, ImportExcel) for the running account if missing.
+# On failure it writes "ERROR: <reason>" to standard error and exits with code 1.
 # ======================================================================================================================
 
 # Tenant ID or domain, e.g. contoso.onmicrosoft.com
@@ -45,41 +48,53 @@ $TimeoutMinutes = ''
 
 $ErrorActionPreference = 'Stop'
 
+function Stop-Run([string] $Message) {
+    [Console]::Error.WriteLine("ERROR: $Message")
+    exit 1
+}
+
+function Get-Setting([string] $Typed, [string] $EnvironmentName) {
+    $value = "$Typed".Trim()
+    if (-not $value) { $value = "$([Environment]::GetEnvironmentVariable($EnvironmentName))".Trim() }
+    $value
+}
+
 function Assert-Setting([string] $Name, [string] $Value, [string] $Pattern, [switch] $Optional) {
     if (-not $Value) {
         if ($Optional) { return }
-        throw "The setting $Name is required."
+        Stop-Run "The setting $Name is required."
     }
-    if ($Value -notmatch $Pattern) { throw "The setting $Name has an invalid value: $Value" }
+    if ($Value -notmatch $Pattern) { Stop-Run "The setting $Name has an invalid value: $Value" }
 }
 
-$TenantId = "$TenantId".Trim()
-$AppId = "$AppId".Trim()
-$ClientSecret = "$ClientSecret".Trim()
-$ExcelPath = "$ExcelPath".Trim()
-$Mode = "$Mode".Trim()
-$WorkspaceIds = "$WorkspaceIds" -replace '\s', ''
-$CertificateThumbprint = "$CertificateThumbprint" -replace '\s', ''
-$TimeoutMinutes = "$TimeoutMinutes".Trim()
+try {
+    $TenantId = Get-Setting $TenantId 'LINEAGE_TENANT_ID'
+    $AppId = Get-Setting $AppId 'LINEAGE_CLIENT_ID'
+    $ClientSecret = Get-Setting $ClientSecret 'PBI_CLIENT_SECRET'
+    $ExcelPath = Get-Setting $ExcelPath 'LINEAGE_EXCEL_PATH'
+    $Mode = Get-Setting $Mode 'LINEAGE_MODE'
+    $WorkspaceIds = (Get-Setting $WorkspaceIds 'LINEAGE_WORKSPACE_IDS') -replace '\s', ''
+    $CertificateThumbprint = (Get-Setting $CertificateThumbprint 'LINEAGE_CERTIFICATE_THUMBPRINT') -replace '\s', ''
+    $TimeoutMinutes = Get-Setting $TimeoutMinutes 'LINEAGE_TIMEOUT_MINUTES'
 
-Assert-Setting 'TenantId' $TenantId '^[A-Za-z0-9.-]+$'
-Assert-Setting 'AppId' $AppId '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
-Assert-Setting 'ExcelPath' $ExcelPath '^[^"<>|*?]+\.xlsx$'
-Assert-Setting 'Mode' $Mode '^(Admin|User|Auto)$' -Optional
-Assert-Setting 'WorkspaceIds' $WorkspaceIds '^[0-9A-Fa-f-]{36}(,[0-9A-Fa-f-]{36})*$' -Optional
-Assert-Setting 'CertificateThumbprint' $CertificateThumbprint '^[0-9A-Fa-f]{40}$' -Optional
-Assert-Setting 'TimeoutMinutes' $TimeoutMinutes '^[0-9]{1,4}$' -Optional
-if (-not $ClientSecret -and -not $CertificateThumbprint) { throw 'Set ClientSecret, or CertificateThumbprint, at the top of the script.' }
-if (-not $Mode) { $Mode = 'Admin' }
-$timeout = 180
-if ($TimeoutMinutes) { $timeout = [int]$TimeoutMinutes }
+    Assert-Setting 'TenantId' $TenantId '^[A-Za-z0-9.-]+$'
+    Assert-Setting 'AppId' $AppId '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
+    Assert-Setting 'ExcelPath' $ExcelPath '^[^"<>|*?]+\.xlsx$'
+    Assert-Setting 'Mode' $Mode '^(Admin|User|Auto)$' -Optional
+    Assert-Setting 'WorkspaceIds' $WorkspaceIds '^[0-9A-Fa-f-]{36}(,[0-9A-Fa-f-]{36})*$' -Optional
+    Assert-Setting 'CertificateThumbprint' $CertificateThumbprint '^[0-9A-Fa-f]{40}$' -Optional
+    Assert-Setting 'TimeoutMinutes' $TimeoutMinutes '^[0-9]{1,4}$' -Optional
+    if (-not $ClientSecret -and -not $CertificateThumbprint) { Stop-Run 'Set ClientSecret or CertificateThumbprint.' }
+    if (-not $Mode) { $Mode = 'Admin' }
+    $timeout = 180
+    if ($TimeoutMinutes) { $timeout = [int]$TimeoutMinutes }
 
-# ---- The tool's scripts, as plain text ------------------------------------------------------------------------------
-# Generated by build/New-OrchestratorRunbook.ps1. A line in a file that starts with the here-string terminator is
-# stored with the marker shown in $escapeMarker in front of it, and restored when unpacked.
+    # ---- The tool's scripts, as plain text --------------------------------------------------------------------------
+    # Generated by build/New-OrchestratorRunbook.ps1. A line in a file that starts with the here-string terminator is
+    # stored with the marker shown in $escapeMarker in front of it, and restored when unpacked.
 
-$escapeMarker = '<~LINEAGE-ESCAPE~>'
-$payload = @(
+    $escapeMarker = '<~LINEAGE-ESCAPE~>'
+    $payload = @(
     @{ Path = 'src\modules\Prerequisites.psm1'; Text = @'
 #Requires -Version 5.1
 <#
@@ -2799,96 +2814,101 @@ catch {
     exit 1
 }
 '@ }
-)
+    )
 
-# ---- Unpack once per version ----------------------------------------------------------------------------------------
+    # ---- Unpack once per version ------------------------------------------------------------------------------------
 
-$sha = [Security.Cryptography.SHA256]::Create()
-$fingerprint = ($payload | ForEach-Object { $_.Path + "`n" + $_.Text }) -join "`n"
-$version = -join (@($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($fingerprint)))[0..5] | ForEach-Object { $_.ToString('x2') })
+    $sha = [Security.Cryptography.SHA256]::Create()
+    $fingerprint = ($payload | ForEach-Object { $_.Path + "`n" + $_.Text }) -join "`n"
+    $version = -join (@($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($fingerprint)))[0..5] | ForEach-Object { $_.ToString('x2') })
 
-$installRoot = Join-Path $env:ProgramData 'PowerBI-Lineage'
-try { $null = New-Item -ItemType Directory -Path $installRoot -Force }
-catch { $installRoot = Join-Path ([IO.Path]::GetTempPath()) 'PowerBI-Lineage' }
-$target = Join-Path $installRoot $version
+    $installRoot = Join-Path $env:ProgramData 'PowerBI-Lineage'
+    try { $null = New-Item -ItemType Directory -Path $installRoot -Force }
+    catch { $installRoot = Join-Path ([IO.Path]::GetTempPath()) 'PowerBI-Lineage' }
+    $target = Join-Path $installRoot $version
 
-if (-not (Test-Path -LiteralPath (Join-Path $target '.complete'))) {
-    foreach ($file in $payload) {
-        $path = Join-Path $target $file.Path
-        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
-        $text = [regex]::Replace($file.Text, '(?m)^' + [regex]::Escape($escapeMarker), '')
-        [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $true))
+    if (-not (Test-Path -LiteralPath (Join-Path $target '.complete'))) {
+        foreach ($file in $payload) {
+            $path = Join-Path $target $file.Path
+            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
+            $text = [regex]::Replace($file.Text, '(?m)^' + [regex]::Escape($escapeMarker), '')
+            [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $true))
+        }
+        Set-Content -LiteralPath (Join-Path $target '.complete') -Value $version
+        # Remove older versions only: their folder names are 12 hex characters.
+        Get-ChildItem -LiteralPath $installRoot | Where-Object { $_.PSIsContainer -and $_.Name -match '^[0-9a-f]{12}$' -and $_.Name -ne $version } |
+            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
     }
-    Set-Content -LiteralPath (Join-Path $target '.complete') -Value $version
-    # Remove older versions only: their folder names are 12 hex characters.
-    Get-ChildItem -LiteralPath $installRoot | Where-Object { $_.PSIsContainer -and $_.Name -match '^[0-9a-f]{12}$' -and $_.Name -ne $version } |
-        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+
+    # ---- Run in 64-bit Windows PowerShell --------------------------------------------------------------------------
+    # Sysnative reaches the 64-bit system folder from a 32-bit process; from a 64-bit process it does not exist.
+    # Settings are passed as environment variables, so no value is ever part of a command line.
+
+    $system = Join-Path $env:SystemRoot 'Sysnative'
+    if (-not (Test-Path -LiteralPath $system)) { $system = Join-Path $env:SystemRoot 'System32' }
+    # This path is resolved by the 64-bit cmd.exe started below, for which Sysnative does not exist: use System32.
+    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $runner = Join-Path $target 'Invoke-LineageRun.ps1'
+
+    $runId = [guid]::NewGuid().ToString('N')
+    $stdoutFile = Join-Path ([IO.Path]::GetTempPath()) "PowerBI-Lineage-$runId.out.txt"
+    $stderrFile = Join-Path ([IO.Path]::GetTempPath()) "PowerBI-Lineage-$runId.err.txt"
+
+    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
+    $startInfo.FileName = Join-Path $system 'cmd.exe'
+    $startInfo.Arguments = '/d /c ""' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $runner +
+        '" > "' + $stdoutFile + '" 2> "' + $stderrFile + '" < NUL"'
+    $startInfo.WorkingDirectory = $target
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $settings = @{
+        LINEAGE_TENANT_ID              = $TenantId
+        LINEAGE_CLIENT_ID              = $AppId
+        LINEAGE_EXCEL_PATH             = $ExcelPath
+        LINEAGE_MODE                   = $Mode
+        LINEAGE_WORKSPACE_IDS          = $WorkspaceIds
+        LINEAGE_CERTIFICATE_THUMBPRINT = $CertificateThumbprint
+        PBI_CLIENT_SECRET              = $ClientSecret
+    }
+    foreach ($name in $settings.Keys) {
+        if ($settings[$name]) { $startInfo.EnvironmentVariables[$name] = $settings[$name] }
+        elseif ($startInfo.EnvironmentVariables.ContainsKey($name)) { $startInfo.EnvironmentVariables.Remove($name) }
+    }
+    if (-not $startInfo.EnvironmentVariables['LOCALAPPDATA']) {
+        $startInfo.EnvironmentVariables['LOCALAPPDATA'] = Join-Path $installRoot 'LocalAppData'
+    }
+
+    $process = [System.Diagnostics.Process]::Start($startInfo)
+    $finished = $process.WaitForExit($timeout * 60 * 1000)
+    if (-not $finished) { & taskkill.exe /PID $process.Id /T /F | Out-Null }
+
+    $output = ''
+    $errorText = ''
+    if (Test-Path -LiteralPath $stdoutFile) { $output = [IO.File]::ReadAllText($stdoutFile); Remove-Item -LiteralPath $stdoutFile -Force }
+    if (Test-Path -LiteralPath $stderrFile) { $errorText = [IO.File]::ReadAllText($stderrFile); Remove-Item -LiteralPath $stderrFile -Force }
+
+    # Orchestrator does not keep the activity's console output, so the run log is saved next to the workbook.
+    $logPath = [IO.Path]::ChangeExtension($ExcelPath, '.log')
+    try {
+        $logFolder = Split-Path -Parent $logPath
+        if ($logFolder -and -not (Test-Path -LiteralPath $logFolder)) { $null = New-Item -ItemType Directory -Path $logFolder -Force }
+        [IO.File]::WriteAllText($logPath, ($output + $errorText))
+    }
+    catch { $logPath = "(log not written: $($_.Exception.Message))" }
+
+    if (-not $finished) {
+        Stop-Run "The run did not finish within $timeout minutes and was stopped. Log: $logPath"
+    }
+    if ($process.ExitCode -ne 0) {
+        $reason = (@($errorText -split "`r?`n" | Where-Object { $_ -match '\S' }) -join ' ') -replace '^ERROR:\s*', ''
+        if (-not $reason) { $reason = (@($output -split "`r?`n" | Where-Object { $_ -match '\S' }) | Select-Object -Last 5) -join ' ' }
+        Stop-Run "$reason Log: $logPath"
+    }
+
+    # Success: the run summary.
+    $output
+    exit 0
 }
-
-# ---- Run in 64-bit Windows PowerShell ------------------------------------------------------------------------------
-# Orchestrator's Run .NET Script activity is a 32-bit process; Sysnative reaches the 64-bit system folder from it.
-# Settings are passed as environment variables, so no value is ever part of a command line.
-
-$system = Join-Path $env:SystemRoot 'Sysnative'
-if (-not (Test-Path -LiteralPath $system)) { $system = Join-Path $env:SystemRoot 'System32' }
-# This path is resolved by the 64-bit cmd.exe started below, for which Sysnative does not exist: use System32.
-$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-$runner = Join-Path $target 'Invoke-LineageRun.ps1'
-
-$runId = [guid]::NewGuid().ToString('N')
-$stdoutFile = Join-Path ([IO.Path]::GetTempPath()) "PowerBI-Lineage-$runId.out.txt"
-$stderrFile = Join-Path ([IO.Path]::GetTempPath()) "PowerBI-Lineage-$runId.err.txt"
-
-$startInfo = New-Object System.Diagnostics.ProcessStartInfo
-$startInfo.FileName = Join-Path $system 'cmd.exe'
-$startInfo.Arguments = '/d /c ""' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $runner +
-    '" > "' + $stdoutFile + '" 2> "' + $stderrFile + '" < NUL"'
-$startInfo.WorkingDirectory = $target
-$startInfo.UseShellExecute = $false
-$startInfo.CreateNoWindow = $true
-$settings = @{
-    LINEAGE_TENANT_ID              = $TenantId
-    LINEAGE_CLIENT_ID              = $AppId
-    LINEAGE_EXCEL_PATH             = $ExcelPath
-    LINEAGE_MODE                   = $Mode
-    LINEAGE_WORKSPACE_IDS          = $WorkspaceIds
-    LINEAGE_CERTIFICATE_THUMBPRINT = $CertificateThumbprint
-    PBI_CLIENT_SECRET              = $ClientSecret
+catch {
+    Stop-Run $_.Exception.Message
 }
-foreach ($name in $settings.Keys) {
-    if ($settings[$name]) { $startInfo.EnvironmentVariables[$name] = $settings[$name] }
-    elseif ($startInfo.EnvironmentVariables.ContainsKey($name)) { $startInfo.EnvironmentVariables.Remove($name) }
-}
-if (-not $startInfo.EnvironmentVariables['LOCALAPPDATA']) {
-    $startInfo.EnvironmentVariables['LOCALAPPDATA'] = Join-Path $installRoot 'LocalAppData'
-}
-
-$process = [System.Diagnostics.Process]::Start($startInfo)
-$finished = $process.WaitForExit($timeout * 60 * 1000)
-if (-not $finished) { & taskkill.exe /PID $process.Id /T /F | Out-Null }
-
-$output = ''
-$errorText = ''
-if (Test-Path -LiteralPath $stdoutFile) { $output = [IO.File]::ReadAllText($stdoutFile); Remove-Item -LiteralPath $stdoutFile -Force }
-if (Test-Path -LiteralPath $stderrFile) { $errorText = [IO.File]::ReadAllText($stderrFile); Remove-Item -LiteralPath $stderrFile -Force }
-
-# Orchestrator does not keep this activity's console output, so the run log is saved next to the workbook.
-$logPath = [IO.Path]::ChangeExtension($ExcelPath, '.log')
-try {
-    $logFolder = Split-Path -Parent $logPath
-    if ($logFolder -and -not (Test-Path -LiteralPath $logFolder)) { $null = New-Item -ItemType Directory -Path $logFolder -Force }
-    [IO.File]::WriteAllText($logPath, ($output + $errorText))
-}
-catch { $logPath = "(log not written: $($_.Exception.Message))" }
-
-if (-not $finished) {
-    throw "Power BI lineage run did not finish within $timeout minutes and was stopped. Log: $logPath"
-}
-if ($process.ExitCode -ne 0) {
-    $reason = (@($errorText -split "`r?`n" | Where-Object { $_ -match '\S' }) -join ' ')
-    if (-not $reason) { $reason = (@($output -split "`r?`n" | Where-Object { $_ -match '\S' }) | Select-Object -Last 5) -join ' ' }
-    throw "Power BI lineage run failed (exit code $($process.ExitCode)): $reason Log: $logPath"
-}
-
-# Success: the run summary becomes the activity's standard output.
-$output
