@@ -1,23 +1,15 @@
-﻿# ======================================================================================================================
-# Power BI Report Lineage: the tool, in one file, for System Center Orchestrator runbook servers
+###############################################################################################################
+# POWER BI REPORT LINEAGE - System Center Orchestrator
 #
-# Traces every Power BI report to its semantic model, tables, and the database server, database, schema and table
-# behind them, and writes an Excel workbook, a JSON file and a run log.
+# Paste this whole file into a "Run .NET Script" activity (Type: PowerShell). Nothing else needs copying.
 #
-# How to use it:
-#   1. Copy this file to the runbook server, e.g. C:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.ps1.
-#   2. Paste PowerBI-Lineage.RunbookActivity.ps1 into a "Run .NET Script" activity and fill in its settings.
-#      That small script starts this file in 64-bit Windows PowerShell and passes the settings to it.
+# Traces every Power BI report to its semantic model, tables, and the database server, database, schema and
+# table behind them. Writes an Excel workbook, a CSV, a JSON file and a run log.
 #
-# This file is not meant to be pasted into the activity itself: at this size Orchestrator's script host cannot load it.
-# It can also be run directly with Windows PowerShell after typing the settings below. Settings left empty here are
-# read from the LINEAGE_* environment variables (and PBI_CLIENT_SECRET) that the runbook activity sets.
-# Replace each Required-... placeholder with a value; a placeholder left in place counts as not filled in.
-#
-# The tool's scripts are embedded below as plain text and unpacked to %ProgramData%\PowerBI-Lineage on first run.
-# It installs two PowerShell modules (MicrosoftPowerBIMgmt.Profile, ImportExcel) for the running account if missing.
-# On failure it writes "ERROR: <reason>" to standard error and exits with code 1.
-# ======================================================================================================================
+# Replace each Required-... placeholder below with a value. Optional settings can stay empty. Instead of typing
+# a value you can subscribe to one (right-click between the quotes > Subscribe), e.g. an encrypted variable for
+# the client secret. Values must not contain a single quote.
+###############################################################################################################
 
 # Tenant ID or domain, e.g. contoso.onmicrosoft.com
 $TenantId = 'Required-TenantId'
@@ -28,11 +20,11 @@ $AppId = 'Required-AppId'
 # The service principal's client secret. Or leave the placeholder and set CertificateThumbprint instead.
 $ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'
 
-# Folder for the workbook, e.g. \\fileserver\bi: each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (local date and time).
-# Or a .xlsx file, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx, replaced on every run. The CSV, run log and JSON go alongside.
+# Folder for the output, e.g. \\fileserver\bi : each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (and .csv, .log).
+# Or a .xlsx file, e.g. \\fileserver\bi\PowerBI-Lineage.xlsx, replaced on every run.
 $ExcelPath = 'Required-ExcelPath'
 
-# Admin = every workspace in the tenant (the default when empty); User = only workspaces the app belongs to
+# Optional: Admin = every workspace in the tenant (the default); User = only workspaces the app belongs to
 $Mode = ''
 
 # Optional: comma-separated workspace IDs to limit the run
@@ -44,2950 +36,612 @@ $CertificateThumbprint = ''
 # Optional: stop the run after this many minutes (default 180)
 $TimeoutMinutes = ''
 
-# ======================================================================================================================
+###############################################################################################################
 # Nothing below needs changing.
-# ======================================================================================================================
+#
+# The tool's scripts are stored below as compressed text (letters and digits only). On the first run they are
+# unpacked to %ProgramData%\PowerBI-Lineage and run in 64-bit Windows PowerShell. The PowerShell modules
+# MicrosoftPowerBIMgmt.Profile and ImportExcel are used where already installed, and installed only if missing.
+###############################################################################################################
 
 $ErrorActionPreference = 'Stop'
 
-function Stop-Run([string] $Message) {
-    [Console]::Error.WriteLine("ERROR: $Message")
-    exit 1
-}
-
+# A setting left empty, or left as its Required-... placeholder, is read from the matching environment variable.
 function Get-Setting([string] $Typed, [string] $EnvironmentName) {
-    # A Required-... placeholder that was not replaced counts as empty.
     $value = "$Typed".Trim() -replace '^Required-.*$', ''
     if (-not $value) { $value = "$([Environment]::GetEnvironmentVariable($EnvironmentName))".Trim() -replace '^Required-.*$', '' }
     $value
 }
 
-function Assert-Setting([string] $Name, [string] $Value, [string] $Pattern, [switch] $Optional) {
+function Assert-Setting([string] $Name, [string] $Value, [string] $Pattern, [bool] $Optional) {
     if (-not $Value) {
         if ($Optional) { return }
-        Stop-Run "The setting $Name is required: replace its Required-... placeholder with a value."
+        throw "The setting $Name is required: replace its Required-... placeholder with a value."
     }
-    if ($Value -notmatch $Pattern) { Stop-Run "The setting $Name has an invalid value: $Value" }
+    if ($Value -notmatch $Pattern) { throw "The setting $Name has an invalid value: $Value" }
 }
 
+$TenantId = Get-Setting $TenantId 'LINEAGE_TENANT_ID'
+$AppId = Get-Setting $AppId 'LINEAGE_CLIENT_ID'
+$ClientSecret = Get-Setting $ClientSecret 'PBI_CLIENT_SECRET'
+$ExcelPath = Get-Setting $ExcelPath 'LINEAGE_EXCEL_PATH'
+$Mode = Get-Setting $Mode 'LINEAGE_MODE'
+$WorkspaceIds = (Get-Setting $WorkspaceIds 'LINEAGE_WORKSPACE_IDS') -replace '\s', ''
+$CertificateThumbprint = (Get-Setting $CertificateThumbprint 'LINEAGE_CERTIFICATE_THUMBPRINT') -replace '\s', ''
+$TimeoutMinutes = Get-Setting $TimeoutMinutes 'LINEAGE_TIMEOUT_MINUTES'
+
+Assert-Setting 'TenantId' $TenantId '^[A-Za-z0-9.-]+$' $false
+Assert-Setting 'AppId' $AppId '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$' $false
+Assert-Setting 'ExcelPath' $ExcelPath '^[^"<>|*?]+$' $false
+Assert-Setting 'Mode' $Mode '^(Admin|User|Auto)$' $true
+Assert-Setting 'WorkspaceIds' $WorkspaceIds '^[0-9A-Fa-f-]{36}(,[0-9A-Fa-f-]{36})*$' $true
+Assert-Setting 'CertificateThumbprint' $CertificateThumbprint '^[0-9A-Fa-f]{40}$' $true
+Assert-Setting 'TimeoutMinutes' $TimeoutMinutes '^[0-9]{1,4}$' $true
+if (-not $ClientSecret -and -not $CertificateThumbprint) { throw 'Set ClientSecret or CertificateThumbprint.' }
+if (-not $Mode) { $Mode = 'Admin' }
+$timeout = 180
+if ($TimeoutMinutes) { $timeout = [int]$TimeoutMinutes }
+
+# A folder gets a workbook named after this run; the CSV and log share its name.
+if ($ExcelPath -notmatch '\.xlsx$') {
+    if ((Split-Path -Leaf $ExcelPath) -match '\.[A-Za-z]{2,5}$') { throw "The setting ExcelPath must be a folder or a .xlsx file: $ExcelPath" }
+    $ExcelPath = Join-Path $ExcelPath ('PowerBI-Lineage_' + (Get-Date).ToString('ddMMyyHHmm') + '.xlsx')
+}
+
+# ---- Unpack the tool once per version ------------------------------------------------------------------------
+
+$payload = @'
+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
+'@
+
+$compressed = [Convert]::FromBase64String(($payload -replace '\s', ''))
+$sha = [Security.Cryptography.SHA256]::Create()
+$version = -join (@($sha.ComputeHash($compressed))[0..5] | ForEach-Object { $_.ToString('x2') })
+
+$installRoot = Join-Path $env:ProgramData 'PowerBI-Lineage'
+try { $null = New-Item -ItemType Directory -Path $installRoot -Force }
+catch { $installRoot = Join-Path ([IO.Path]::GetTempPath()) 'PowerBI-Lineage' }
+$target = Join-Path $installRoot $version
+
+if (-not (Test-Path -LiteralPath (Join-Path $target '.complete'))) {
+    $memory = New-Object System.IO.MemoryStream -ArgumentList (, $compressed)
+    $gzip = New-Object System.IO.Compression.GZipStream -ArgumentList $memory, ([IO.Compression.CompressionMode]::Decompress)
+    $reader = New-Object System.IO.StreamReader -ArgumentList $gzip, ([Text.Encoding]::UTF8)
+    $bundle = $reader.ReadToEnd()
+    $reader.Close()
+
+    # The bundle is each file's text after a line "=====LINEAGE-FILE: <path>=====".
+    $parts = [regex]::Split($bundle, '(?m)^=====LINEAGE-FILE: (.+?)=====\r?\n')
+    for ($i = 1; $i -lt $parts.Count; $i += 2) {
+        $path = Join-Path $target $parts[$i]
+        $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
+        [IO.File]::WriteAllText($path, $parts[$i + 1], (New-Object System.Text.UTF8Encoding -ArgumentList $true))
+    }
+    Set-Content -LiteralPath (Join-Path $target '.complete') -Value $version
+    # Remove older versions only: their folder names are 12 hex characters.
+    Get-ChildItem -LiteralPath $installRoot | Where-Object { $_.PSIsContainer -and $_.Name -match '^[0-9a-f]{12}$' -and $_.Name -ne $version } |
+        Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# ---- Run in 64-bit Windows PowerShell --------------------------------------------------------------------------
+# Orchestrator runs this script in 32-bit PowerShell; Sysnative reaches the 64-bit system folder from there.
+# Settings are passed as environment variables, so no value is ever part of a command line.
+
+$system = Join-Path $env:SystemRoot 'Sysnative'
+if (-not (Test-Path -LiteralPath $system)) { $system = Join-Path $env:SystemRoot 'System32' }
+# This path is resolved by the 64-bit cmd.exe started below, for which Sysnative does not exist: use System32.
+$powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+$runner = Join-Path $target 'Invoke-LineageRun.ps1'
+
+$runId = [guid]::NewGuid().ToString('N')
+$stdoutFile = Join-Path ([IO.Path]::GetTempPath()) ('PowerBI-Lineage-' + $runId + '.out.txt')
+$stderrFile = Join-Path ([IO.Path]::GetTempPath()) ('PowerBI-Lineage-' + $runId + '.err.txt')
+
+$startInfo = New-Object System.Diagnostics.ProcessStartInfo
+$startInfo.FileName = Join-Path $system 'cmd.exe'
+$startInfo.Arguments = '/d /c ""' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $runner +
+    '" > "' + $stdoutFile + '" 2> "' + $stderrFile + '" < NUL"'
+$startInfo.WorkingDirectory = $target
+$startInfo.UseShellExecute = $false
+$startInfo.CreateNoWindow = $true
+$settings = @{
+    LINEAGE_TENANT_ID              = $TenantId
+    LINEAGE_CLIENT_ID              = $AppId
+    LINEAGE_EXCEL_PATH             = $ExcelPath
+    LINEAGE_MODE                   = $Mode
+    LINEAGE_WORKSPACE_IDS          = $WorkspaceIds
+    LINEAGE_CERTIFICATE_THUMBPRINT = $CertificateThumbprint
+    PBI_CLIENT_SECRET              = $ClientSecret
+}
+foreach ($name in $settings.Keys) {
+    if ($settings[$name]) { $startInfo.EnvironmentVariables[$name] = $settings[$name] }
+    elseif ($startInfo.EnvironmentVariables.ContainsKey($name)) { $startInfo.EnvironmentVariables.Remove($name) }
+}
+if (-not $startInfo.EnvironmentVariables['LOCALAPPDATA']) {
+    $startInfo.EnvironmentVariables['LOCALAPPDATA'] = Join-Path $installRoot 'LocalAppData'
+}
+
+$process = [System.Diagnostics.Process]::Start($startInfo)
+$finished = $process.WaitForExit($timeout * 60 * 1000)
+if (-not $finished) { & taskkill.exe /PID $process.Id /T /F | Out-Null }
+
+$output = ''
+$errorText = ''
+if (Test-Path -LiteralPath $stdoutFile) { $output = [IO.File]::ReadAllText($stdoutFile); Remove-Item -LiteralPath $stdoutFile -Force }
+if (Test-Path -LiteralPath $stderrFile) { $errorText = [IO.File]::ReadAllText($stderrFile); Remove-Item -LiteralPath $stderrFile -Force }
+
+# Orchestrator does not keep the activity's console output, so the run log is saved next to the workbook.
+$logPath = [IO.Path]::ChangeExtension($ExcelPath, '.log')
 try {
-    $TenantId = Get-Setting $TenantId 'LINEAGE_TENANT_ID'
-    $AppId = Get-Setting $AppId 'LINEAGE_CLIENT_ID'
-    $ClientSecret = Get-Setting $ClientSecret 'PBI_CLIENT_SECRET'
-    $ExcelPath = Get-Setting $ExcelPath 'LINEAGE_EXCEL_PATH'
-    $Mode = Get-Setting $Mode 'LINEAGE_MODE'
-    $WorkspaceIds = (Get-Setting $WorkspaceIds 'LINEAGE_WORKSPACE_IDS') -replace '\s', ''
-    $CertificateThumbprint = (Get-Setting $CertificateThumbprint 'LINEAGE_CERTIFICATE_THUMBPRINT') -replace '\s', ''
-    $TimeoutMinutes = Get-Setting $TimeoutMinutes 'LINEAGE_TIMEOUT_MINUTES'
-
-    Assert-Setting 'TenantId' $TenantId '^[A-Za-z0-9.-]+$'
-    Assert-Setting 'AppId' $AppId '^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{12}$'
-    Assert-Setting 'ExcelPath' $ExcelPath '^[^"<>|*?]+$'
-    if ($ExcelPath -notmatch '\.xlsx$') {
-        if ((Split-Path -Leaf $ExcelPath) -match '\.[A-Za-z]{2,5}$') { Stop-Run "The setting ExcelPath must be a folder or a .xlsx file: $ExcelPath" }
-        # A folder: name the workbook after this run, so the CSV and log below share its name.
-        $ExcelPath = Join-Path $ExcelPath ('PowerBI-Lineage_{0:ddMMyyHHmm}.xlsx' -f (Get-Date))
-    }
-    Assert-Setting 'Mode' $Mode '^(Admin|User|Auto)$' -Optional
-    Assert-Setting 'WorkspaceIds' $WorkspaceIds '^[0-9A-Fa-f-]{36}(,[0-9A-Fa-f-]{36})*$' -Optional
-    Assert-Setting 'CertificateThumbprint' $CertificateThumbprint '^[0-9A-Fa-f]{40}$' -Optional
-    Assert-Setting 'TimeoutMinutes' $TimeoutMinutes '^[0-9]{1,4}$' -Optional
-    if (-not $ClientSecret -and -not $CertificateThumbprint) { Stop-Run 'Set ClientSecret or CertificateThumbprint.' }
-    if (-not $Mode) { $Mode = 'Admin' }
-    $timeout = 180
-    if ($TimeoutMinutes) { $timeout = [int]$TimeoutMinutes }
-
-    # ---- The tool's scripts, as plain text --------------------------------------------------------------------------
-    # Generated by build/New-OrchestratorRunbook.ps1. A line in a file that starts with the here-string terminator is
-    # stored with the marker shown in $escapeMarker in front of it, and restored when unpacked.
-
-    $escapeMarker = '<~LINEAGE-ESCAPE~>'
-    $payload = @(
-    @{ Path = 'src\modules\Prerequisites.psm1'; Text = @'
-#Requires -Version 5.1
-<#
-.SYNOPSIS
-    Makes sure the PowerShell modules a script needs are present, installing them for the current user only if not.
-
-.DESCRIPTION
-    A module that is already installed is used as it is, never installed again. It is looked for in this
-    PowerShell's module folders first, then in the module folders of the other Windows PowerShell (32-bit or 64-bit),
-    so a module installed for one of them, e.g. for a System Center Orchestrator runbook, is found by the other.
-
-    Only a module found nowhere is installed, into the current user's module folder, so no administrator rights are
-    needed. Works in Windows PowerShell 5.1 (bootstrapping the NuGet provider and TLS 1.2 it needs to reach the
-    PowerShell Gallery) and in PowerShell 7.
-#>
-
-function Get-OtherModuleFolder {
-    # Windows PowerShell module folders for all users and the current user, in both 64-bit and 32-bit form.
-    if (-not $env:SystemRoot) { return }
-    $documents = [Environment]::GetFolderPath('MyDocuments')
-    $programFiles = @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
-    $folders = @(
-        foreach ($root in $programFiles) { Join-Path $root 'WindowsPowerShell\Modules' }
-        foreach ($system in 'System32', 'Sysnative', 'SysWOW64') { Join-Path $env:SystemRoot "$system\WindowsPowerShell\v1.0\Modules" }
-        if ($documents) { Join-Path $documents 'WindowsPowerShell\Modules' }
-    )
-    $folders | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique
-}
-
-function Add-OtherModuleFolder {
-    # Appends the folders this PowerShell does not already search, for this process only. Returns $true if any were added.
-    $current = @($env:PSModulePath -split ';' | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\') })
-    $added = @(Get-OtherModuleFolder | Where-Object { $current -notcontains $_.TrimEnd('\') })
-    if ($added.Count -eq 0) { return $false }
-    $env:PSModulePath = (@($current) + $added) -join ';'
-    $true
-}
-
-function Find-RequiredModule {
-    <#
-    .SYNOPSIS
-        Returns the newest installed copy of a module (at least MinimumVersion), or nothing if it is not installed.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string] $Name,
-        [version] $MinimumVersion
-    )
-    for ($attempt = 1; $attempt -le 2; $attempt++) {
-        $found = Get-Module -ListAvailable -Name $Name |
-            Where-Object { -not $MinimumVersion -or $_.Version -ge $MinimumVersion } |
-            Sort-Object Version -Descending |
-            Select-Object -First 1
-        if ($found) { return $found }
-        # Not in this PowerShell's folders: look in the other Windows PowerShell's folders once.
-        if ($attempt -eq 1 -and -not (Add-OtherModuleFolder)) { return }
-    }
-}
-
-function Initialize-RequiredModule {
-    <#
-    .SYNOPSIS
-        Imports a module. Installs it from the PowerShell Gallery for the current user first, only if it is not installed.
-    .EXAMPLE
-        Initialize-RequiredModule -Name ImportExcel
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string] $Name,
-        [version] $MinimumVersion
-    )
-    if (-not (Find-RequiredModule -Name $Name -MinimumVersion $MinimumVersion)) {
-        Write-Information "Installing the $Name PowerShell module for your user account (first run only)..."
-        $ProgressPreference = 'SilentlyContinue'
-        try {
-            # Windows PowerShell 5.1 defaults to TLS 1.0/1.1, which the PowerShell Gallery refuses.
-            [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-
-            $nuget = Get-PackageProvider -ListAvailable -ErrorAction SilentlyContinue |
-                Where-Object { $_.Name -eq 'NuGet' -and $_.Version -ge [version]'2.8.5.201' }
-            if (-not $nuget) {
-                $null = Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Scope CurrentUser -Force -ErrorAction Stop
-            }
-
-            $install = @{ Name = $Name; Scope = 'CurrentUser'; Repository = 'PSGallery'; Force = $true; ErrorAction = 'Stop' }
-            if ($MinimumVersion) { $install.MinimumVersion = $MinimumVersion }
-            Install-Module @install
-        }
-        catch {
-            $account = [Security.Principal.WindowsIdentity]::GetCurrent().Name
-            throw ("The $Name module is not installed on $env:COMPUTERNAME for $account, and installing it from the " +
-                "PowerShell Gallery failed: $($_.Exception.Message) " +
-                "Install it once for all users in an elevated Windows PowerShell: Install-Module $Name -Scope AllUsers " +
-                "(or ask IT to allow powershellgallery.com, or to install it).")
-        }
-    }
-
-    $import = @{ Name = $Name; ErrorAction = 'Stop'; WarningAction = 'SilentlyContinue' }
-    if ($MinimumVersion) { $import.MinimumVersion = $MinimumVersion }
-    Import-Module @import
-}
-
-Export-ModuleMember -Function Find-RequiredModule, Initialize-RequiredModule
-'@ }
-    @{ Path = 'src\modules\PowerBIRest.psm1'; Text = @'
-#Requires -Version 5.1
-<#
-.SYNOPSIS
-    Power BI REST helpers: authenticated calls with throttling retry, paging, and the admin scanner workflow.
-
-.DESCRIPTION
-    Uses the token from the current MicrosoftPowerBIMgmt session (Connect-PowerBIServiceAccount), so interactive
-    and service principal sign-in both work. Calls go through Invoke-RestMethod rather than
-    Invoke-PowerBIRestMethod so that 429 Retry-After headers and error bodies are visible.
-
-    Runs in Windows PowerShell 5.1 and PowerShell 7. Failed calls throw an exception whose Data['StatusCode']
-    holds the HTTP status.
-#>
-
-# Windows PowerShell 5.1 defaults to TLS 1.0/1.1; Power BI requires TLS 1.2.
-[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-
-$script:ApiBaseUrl = 'https://api.powerbi.com/v1.0/myorg'
-# Get-PowerBIAccessToken comes from MicrosoftPowerBIMgmt.Profile, which callers load with Initialize-RequiredModule.
-
-function Set-PbiApiBaseUrl {
-    <#
-    .SYNOPSIS
-        Overrides the API root, for sovereign clouds (e.g. https://api.powerbigov.us/v1.0/myorg).
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string] $Url)
-    $script:ApiBaseUrl = $Url.TrimEnd('/')
-}
-
-function Invoke-PbiRestMethod {
-    <#
-    .SYNOPSIS
-        Calls a Power BI REST endpoint, retrying on 429 and 5xx.
-    .PARAMETER Path
-        Path relative to the API root (e.g. 'groups'), or an absolute https URL.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string] $Path,
-        [ValidateSet('Get', 'Post')][string] $Method = 'Get',
-        [object] $Body,
-        [int] $MaxRetries = 6
-    )
-    # Invoke-RestMethod's progress bar is noise here and makes Windows PowerShell 5.1 requests much slower.
-    $ProgressPreference = 'SilentlyContinue'
-    $uri = if ($Path -match '^https?://') { $Path } else { '{0}/{1}' -f $script:ApiBaseUrl, $Path.TrimStart('/') }
-    # Assigned directly: an if-expression would unroll the byte array into object[] and corrupt the body.
-    $bodyBytes = $null
-    if ($null -ne $Body) { $bodyBytes = [Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 20 -Compress)) }
-
-    for ($attempt = 0; ; $attempt++) {
-        $request = @{
-            Uri             = $uri
-            Method          = $Method
-            Headers         = @{ Authorization = (Get-PowerBIAccessToken -AsString) }
-            UseBasicParsing = $true
-        }
-        if ($bodyBytes) {
-            $request.Body = $bodyBytes
-            $request.ContentType = 'application/json; charset=utf-8'
-        }
-
-        try {
-            return Invoke-RestMethod @request
-        }
-        catch {
-            # 5.1 surfaces an HttpWebResponse, PowerShell 7 an HttpResponseMessage; both carry StatusCode.
-            $response = $_.Exception.Response
-            if ($null -eq $response) { throw }
-            $status = [int]$response.StatusCode
-            $errorBody = $_.ErrorDetails.Message
-            if (-not $errorBody -and $response -is [System.Net.HttpWebResponse]) {
-                try { $errorBody = [IO.StreamReader]::new($response.GetResponseStream()).ReadToEnd() }
-                catch { Write-Verbose "Could not read the error response body: $($_.Exception.Message)" }
-            }
-            $retryAfter = if ($response.Headers -is [System.Net.WebHeaderCollection]) { $response.Headers['Retry-After'] }
-            elseif ($response.Headers.RetryAfter.Delta) { $response.Headers.RetryAfter.Delta.TotalSeconds }
-        }
-
-        $retryable = $status -eq 429 -or $status -ge 500
-        if (-not $retryable -or $attempt -ge $MaxRetries) {
-            $detail = $errorBody
-            try {
-                $parsed = $errorBody | ConvertFrom-Json -ErrorAction Stop
-                # executeQueries puts the readable reason in error.pbi.error.details[].detail.value.
-                $pbiDetails = @($parsed.error.'pbi.error'.details | Where-Object { $_ } | ForEach-Object {
-                        if ($_.detail.value) { $_.detail.value } elseif ($_.message) { $_.message }
-                    })
-                if ($parsed.error.message) { $detail = $parsed.error.message }
-                elseif ($pbiDetails.Count -gt 0) { $detail = $pbiDetails -join ' ' }
-                elseif ($parsed.error.code) { $detail = $parsed.error.code }
-                elseif ($parsed.Message) { $detail = $parsed.Message }
-            }
-            catch { Write-Verbose 'Error body is not JSON.' }
-            if (-not $detail) { $detail = if ($response.ReasonPhrase) { $response.ReasonPhrase } else { $response.StatusDescription } }
-            if ($detail -and $detail.Length -gt 1000) { $detail = $detail.Substring(0, 1000) }
-            $shownPath = if ($uri.StartsWith("$script:ApiBaseUrl/")) { $uri.Substring($script:ApiBaseUrl.Length + 1) } else { $uri }
-            $exception = [System.InvalidOperationException]::new("HTTP $status from $($Method.ToUpperInvariant()) ${shownPath}: $detail")
-            $exception.Data['StatusCode'] = $status
-            throw $exception
-        }
-
-        $delay = [math]::Min(60, [math]::Pow(2, $attempt + 1))
-        if ($retryAfter -as [int]) { $delay = [int]$retryAfter }
-        Write-Verbose "HTTP $status from $uri; retrying in $delay s (attempt $($attempt + 1) of $MaxRetries)."
-        Start-Sleep -Seconds $delay
-    }
-}
-
-function Get-PbiPagedValue {
-    <#
-    .SYNOPSIS
-        Returns every item from an endpoint that pages with $top / $skip and wraps results in 'value'.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string] $Path,
-        [int] $PageSize = 5000
-    )
-    $skip = 0
-    do {
-        $separator = if ($Path.Contains('?')) { '&' } else { '?' }
-        $page = Invoke-PbiRestMethod -Path ('{0}{1}$top={2}&$skip={3}' -f $Path, $separator, $PageSize, $skip)
-        $items = @($page.value | Where-Object { $_ })
-        $items
-        $skip += $PageSize
-    } while ($items.Count -eq $PageSize)
-}
-
-function Invoke-PbiWorkspaceScan {
-    <#
-    .SYNOPSIS
-        Runs the admin scanner (WorkspaceInfo) over workspaces in batches and emits one scan result per batch.
-    .DESCRIPTION
-        Requests lineage, data source details, dataset schema and dataset expressions. Table and expression
-        metadata only comes back when the tenant settings "Enhance admin APIs responses with detailed metadata"
-        and "Enhance admin APIs responses with DAX and mashup expressions" are enabled.
-    .PARAMETER OnProgress
-        Optional script block called with a short status text ("batch 2 of 5, scanning") while batches run.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string[]] $WorkspaceId,
-        [ValidateRange(1, 100)][int] $BatchSize = 100,
-        [int] $PollSeconds = 5,
-        [int] $TimeoutMinutes = 30,
-        [scriptblock] $OnProgress
-    )
-    $query = 'lineage=True&datasourceDetails=True&datasetSchema=True&datasetExpressions=True&getArtifactUsers=False'
-    $batchCount = [math]::Ceiling($WorkspaceId.Count / $BatchSize)
-
-    for ($batch = 0; $batch -lt $batchCount; $batch++) {
-        $ids = @($WorkspaceId | Select-Object -Skip ($batch * $BatchSize) -First $BatchSize)
-        $label = "batch $($batch + 1) of $batchCount"
-        if ($OnProgress) { & $OnProgress "$label, starting" }
-
-        $scan = Invoke-PbiRestMethod -Method Post -Path "admin/workspaces/getInfo?$query" -Body @{ workspaces = $ids }
-        $deadline = (Get-Date).AddMinutes($TimeoutMinutes)
-        do {
-            Start-Sleep -Seconds $PollSeconds
-            $state = Invoke-PbiRestMethod -Path "admin/workspaces/scanStatus/$($scan.id)"
-            if ($OnProgress) { & $OnProgress "$label, $($state.status.ToLowerInvariant())" }
-            if ((Get-Date) -gt $deadline) { throw "Scan $($scan.id) did not finish within $TimeoutMinutes minutes." }
-        } while ($state.status -in 'NotStarted', 'Running')
-
-        if ($state.status -ne 'Succeeded') { throw "Scan $($scan.id) ended with status '$($state.status)'." }
-        if ($OnProgress) { & $OnProgress "$label, downloading" }
-        Invoke-PbiRestMethod -Path "admin/workspaces/scanResult/$($scan.id)"
-    }
-}
-
-Export-ModuleMember -Function Set-PbiApiBaseUrl, Invoke-PbiRestMethod, Get-PbiPagedValue, Invoke-PbiWorkspaceScan
-'@ }
-    @{ Path = 'src\modules\MQueryLineage.psm1'; Text = @'
-#Requires -Version 5.1
-<#
-.SYNOPSIS
-    Static analysis of Power Query (M) expressions: finds the upstream server, database, schema and
-    table/view that a Power BI model table reads from.
-
-.DESCRIPTION
-    Power BI does not store "which database table feeds this model table" as a field. It stores the M
-    expression behind each table. This module tokenises that expression, walks its let-steps and any shared
-    expressions (queries and parameters) it references, and returns:
-
-      - the connector call, e.g. Sql.Database("server", "database")
-      - the navigation steps that pick an object, e.g. Source{[Schema="dbo", Item="FactSales"]}[Data]
-      - any native SQL, e.g. [Query="SELECT ..."] or Value.NativeQuery(...), with the tables it references
-
-    It reads the expression; it does not evaluate it. Anything computed at refresh time (function results,
-    dynamic navigation, text built from other queries) is reported as unresolved, never guessed. Parameters
-    that cannot be resolved appear as {ParameterName}.
-#>
-
-$script:TokenPattern = [regex]::new(@'
-  (?<ws>\s+)
-| (?<comment>//[^\r\n]*|/\*.*?\*/)
-| (?<qid>\#"(?:[^"]|"")*")
-| (?<str>"(?:[^"]|"")*")
-| (?<num>\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)
-| (?<id>\#?[\p{L}_][\p{L}\p{Nd}_]*(?:\.[\p{L}_][\p{L}\p{Nd}_]*)*)
-| (?<sym>=>|<>|<=|>=|\.\.\.?|\S)
-<~LINEAGE-ESCAPE~>'@, 'IgnorePatternWhitespace, Singleline, Compiled')
-
-$script:MEscapeEvaluator = [System.Text.RegularExpressions.MatchEvaluator] {
-    param($match)
-    $builder = [System.Text.StringBuilder]::new()
-    foreach ($code in $match.Groups[1].Value.Split(',')) {
-        $c = $code.Trim()
-        if ($c -ceq 'cr') { [void]$builder.Append("`r") }
-        elseif ($c -ceq 'lf') { [void]$builder.Append("`n") }
-        elseif ($c -ceq 'tab') { [void]$builder.Append("`t") }
-        elseif ($c -eq '#') { [void]$builder.Append('#') }
-        elseif ($c -match '^(?:[0-9A-Fa-f]{4}|[0-9A-Fa-f]{8})$') {
-            [void]$builder.Append([char]::ConvertFromUtf32([Convert]::ToInt32($c, 16)))
-        }
-        else { return $match.Value }
-    }
-    $builder.ToString()
-}
-
-$script:Keywords = [System.Collections.Generic.HashSet[string]]::new(
-    [string[]]@('let', 'in', 'each', 'if', 'then', 'else', 'and', 'or', 'not', 'true', 'false', 'null', 'meta',
-        'type', 'as', 'is', 'otherwise', 'try', 'error', 'section', 'shared'),
-    [System.StringComparer]::Ordinal)
-
-# Argument roles: Server, Database, Object, Location and NativeQuery map to output fields; any other role
-# name (HttpPath, Warehouse) is kept as a connector option.
-$script:ConnectorCatalog = @{
-    'Sql.Database'                  = @{ SourceType = 'SQL Server'; Arguments = @('Server', 'Database') }
-    'Sql.Databases'                 = @{ SourceType = 'SQL Server'; Arguments = @('Server') }
-    'Oracle.Database'               = @{ SourceType = 'Oracle'; Arguments = @('Server') }
-    'PostgreSQL.Database'           = @{ SourceType = 'PostgreSQL'; Arguments = @('Server', 'Database') }
-    'MySQL.Database'                = @{ SourceType = 'MySQL'; Arguments = @('Server', 'Database') }
-    'AmazonRedshift.Database'       = @{ SourceType = 'Amazon Redshift'; Arguments = @('Server', 'Database') }
-    'Snowflake.Databases'           = @{ SourceType = 'Snowflake'; Arguments = @('Server', 'Warehouse') }
-    'GoogleBigQuery.Database'       = @{ SourceType = 'Google BigQuery'; Arguments = @() }
-    'Databricks.Catalogs'           = @{ SourceType = 'Databricks'; Arguments = @('Server', 'HttpPath') }
-    'Databricks.Contents'           = @{ SourceType = 'Databricks'; Arguments = @('Server', 'HttpPath') }
-    'DatabricksMultiCloud.Catalogs' = @{ SourceType = 'Databricks'; Arguments = @('Server', 'HttpPath') }
-    'Teradata.Database'             = @{ SourceType = 'Teradata'; Arguments = @('Server') }
-    'DB2.Database'                  = @{ SourceType = 'IBM Db2'; Arguments = @('Server', 'Database') }
-    'SapHana.Database'              = @{ SourceType = 'SAP HANA'; Arguments = @('Server') }
-    'SapBusinessWarehouse.Cubes'    = @{ SourceType = 'SAP BW'; Arguments = @('Server') }
-    'Sybase.Database'               = @{ SourceType = 'Sybase'; Arguments = @('Server', 'Database') }
-    'Informix.Database'             = @{ SourceType = 'Informix'; Arguments = @('Server', 'Database') }
-    'AnalysisServices.Database'     = @{ SourceType = 'Analysis Services'; Arguments = @('Server', 'Database') }
-    'AnalysisServices.Databases'    = @{ SourceType = 'Analysis Services'; Arguments = @('Server') }
-    'AzureDataExplorer.Contents'    = @{ SourceType = 'Azure Data Explorer'; Arguments = @('Server', 'Database', 'Object') }
-    'Kusto.Contents'                = @{ SourceType = 'Azure Data Explorer'; Arguments = @('Server', 'Database', 'Object') }
-    'Odbc.DataSource'               = @{ SourceType = 'ODBC'; Arguments = @('Server') }
-    'Odbc.Query'                    = @{ SourceType = 'ODBC'; Arguments = @('Server', 'NativeQuery') }
-    'OleDb.DataSource'              = @{ SourceType = 'OLE DB'; Arguments = @('Server') }
-    'OleDb.Query'                   = @{ SourceType = 'OLE DB'; Arguments = @('Server', 'NativeQuery') }
-    'OData.Feed'                    = @{ SourceType = 'OData'; Arguments = @('Location') }
-    'Web.Contents'                  = @{ SourceType = 'Web'; Arguments = @('Location') }
-    'SharePoint.Files'              = @{ SourceType = 'SharePoint'; Arguments = @('Location') }
-    'SharePoint.Contents'           = @{ SourceType = 'SharePoint'; Arguments = @('Location') }
-    'SharePoint.Tables'             = @{ SourceType = 'SharePoint list'; Arguments = @('Location') }
-    'File.Contents'                 = @{ SourceType = 'File'; Arguments = @('Location') }
-    'Folder.Files'                  = @{ SourceType = 'Folder'; Arguments = @('Location') }
-    'Folder.Contents'               = @{ SourceType = 'Folder'; Arguments = @('Location') }
-    'AzureStorage.Blobs'            = @{ SourceType = 'Azure Blob Storage'; Arguments = @('Location') }
-    'AzureStorage.DataLake'         = @{ SourceType = 'Azure Data Lake Storage'; Arguments = @('Location') }
-    'AzureStorage.Tables'           = @{ SourceType = 'Azure Table Storage'; Arguments = @('Location') }
-    'Lakehouse.Contents'            = @{ SourceType = 'Fabric Lakehouse'; Arguments = @() }
-    'Fabric.Warehouse'              = @{ SourceType = 'Fabric Warehouse'; Arguments = @() }
-    'PowerPlatform.Dataflows'       = @{ SourceType = 'Dataflow'; Arguments = @() }
-    'PowerBI.Dataflows'             = @{ SourceType = 'Dataflow'; Arguments = @() }
-    'CommonDataService.Database'    = @{ SourceType = 'Dataverse'; Arguments = @('Server') }
-    'Dataverse.Contents'            = @{ SourceType = 'Dataverse'; Arguments = @() }
-    'Salesforce.Data'               = @{ SourceType = 'Salesforce'; Arguments = @('Location') }
-}
-
-# Library namespaces whose *.Contents / *.Tables / ... functions transform data rather than connect to a source.
-$script:NonSourceNamespaces = [System.Collections.Generic.HashSet[string]]::new(
-    [string[]]@('Table', 'List', 'Record', 'Text', 'Number', 'Date', 'DateTime', 'DateTimeZone', 'Duration', 'Time',
-        'Binary', 'BinaryFormat', 'Value', 'Expression', 'Function', 'Type', 'Json', 'Csv', 'Excel', 'Xml', 'Lines',
-        'Splitter', 'Combiner', 'Replacer', 'Comparer', 'Cube', 'Uri', 'Html', 'Pdf', 'Parquet', 'Access',
-        'Character', 'Logical', 'Diagnostics', 'Error', 'Variable', 'Embedded', 'Action', 'Culture'),
-    [System.StringComparer]::OrdinalIgnoreCase)
-
-$script:SharedContextCache = $null
-
-#region Tokenising
-
-function ConvertFrom-MStringLiteral {
-    param([string] $Literal)
-    $inner = $Literal.Substring(1, $Literal.Length - 2).Replace('""', '"')
-    [regex]::Replace($inner, '#\(([^)]*)\)', $script:MEscapeEvaluator)
-}
-
-function Get-MToken {
-    param([AllowEmptyString()][string] $Expression)
-    $tokens = [System.Collections.Generic.List[object]]::new()
-    foreach ($m in $script:TokenPattern.Matches($Expression)) {
-        if ($m.Groups['ws'].Success -or $m.Groups['comment'].Success) { continue }
-        $token = if ($m.Groups['str'].Success) {
-            [pscustomobject]@{ Type = 'String'; Value = ConvertFrom-MStringLiteral $m.Value; Quoted = $false }
-        }
-        elseif ($m.Groups['qid'].Success) {
-            $name = $m.Value.Substring(2, $m.Value.Length - 3).Replace('""', '"')
-            [pscustomobject]@{ Type = 'Identifier'; Value = $name; Quoted = $true }
-        }
-        elseif ($m.Groups['id'].Success) { [pscustomobject]@{ Type = 'Identifier'; Value = $m.Value; Quoted = $false } }
-        elseif ($m.Groups['num'].Success) { [pscustomobject]@{ Type = 'Number'; Value = $m.Value; Quoted = $false } }
-        else { [pscustomobject]@{ Type = 'Symbol'; Value = $m.Value; Quoted = $false } }
-        $tokens.Add($token)
-    }
-    , $tokens
-}
-
-function Test-MSymbol {
-    param($Token, [string[]] $Value)
-    $null -ne $Token -and $Token.Type -eq 'Symbol' -and $Value -contains $Token.Value
-}
-
-function Test-MKeyword {
-    param($Token, [string] $Keyword)
-    $null -ne $Token -and $Token.Type -eq 'Identifier' -and -not $Token.Quoted -and $Token.Value -ceq $Keyword
-}
-
-function Get-MTokenRange {
-    param([System.Collections.Generic.List[object]] $Tokens, [int] $From, [int] $To)
-    if ($To -lt $From) { return , [System.Collections.Generic.List[object]]::new() }
-    , $Tokens.GetRange($From, $To - $From + 1)
-}
-
-#endregion
-
-#region Structure: let-steps, call arguments, records
-
-function Split-MLetExpression {
-    param([System.Collections.Generic.List[object]] $Tokens)
-    $steps = [System.Collections.Generic.List[object]]::new()
-    if ($Tokens.Count -eq 0 -or -not (Test-MKeyword $Tokens[0] 'let')) {
-        return [pscustomobject]@{ Steps = $steps; Result = $Tokens }
-    }
-
-    $addStep = {
-        param([int] $From, [int] $To)
-        $segment = Get-MTokenRange $Tokens $From $To
-        if ($segment.Count -ge 3 -and $segment[0].Type -eq 'Identifier' -and (Test-MSymbol $segment[1] '=')) {
-            $steps.Add([pscustomobject]@{ Name = $segment[0].Value; Body = (Get-MTokenRange $segment 2 ($segment.Count - 1)) })
-        }
-    }
-
-    $depth = 0
-    $letDepth = 1
-    $start = 1
-    for ($k = 1; $k -lt $Tokens.Count; $k++) {
-        $t = $Tokens[$k]
-        if (Test-MSymbol $t '(', '[', '{') { $depth++ }
-        elseif (Test-MSymbol $t ')', ']', '}') { $depth-- }
-        elseif ($depth -eq 0 -and $letDepth -eq 1 -and (Test-MSymbol $t ',')) {
-            & $addStep $start ($k - 1)
-            $start = $k + 1
-        }
-        elseif ($depth -eq 0 -and (Test-MKeyword $t 'let')) { $letDepth++ }
-        elseif ($depth -eq 0 -and (Test-MKeyword $t 'in')) {
-            $letDepth--
-            if ($letDepth -eq 0) {
-                & $addStep $start ($k - 1)
-                return [pscustomobject]@{ Steps = $steps; Result = (Get-MTokenRange $Tokens ($k + 1) ($Tokens.Count - 1)) }
-            }
-        }
-    }
-    & $addStep $start ($Tokens.Count - 1)
-    [pscustomobject]@{ Steps = $steps; Result = [System.Collections.Generic.List[object]]::new() }
-}
-
-function Get-MCallArgument {
-    param([System.Collections.Generic.List[object]] $Tokens, [int] $OpenIndex)
-    $arguments = [System.Collections.Generic.List[object]]::new()
-    $current = [System.Collections.Generic.List[object]]::new()
-    $depth = 0
-    for ($k = $OpenIndex; $k -lt $Tokens.Count; $k++) {
-        $t = $Tokens[$k]
-        if (Test-MSymbol $t '(', '[', '{') {
-            $depth++
-            if ($depth -eq 1) { continue }
-        }
-        elseif (Test-MSymbol $t ')', ']', '}') {
-            $depth--
-            if ($depth -eq 0) { break }
-        }
-        elseif ($depth -eq 1 -and (Test-MSymbol $t ',')) {
-            $arguments.Add($current)
-            $current = [System.Collections.Generic.List[object]]::new()
-            continue
-        }
-        $current.Add($t)
-    }
-    if ($current.Count -gt 0) { $arguments.Add($current) }
-    , $arguments
-}
-
-function ConvertFrom-MRecord {
-    # Reads the record literal starting at $OpenIndex ('[') into a hashtable of field -> resolved text value.
-    param([System.Collections.Generic.List[object]] $Tokens, [int] $OpenIndex, $Scope, $Context)
-    $fields = @{}
-    foreach ($field in (Get-MCallArgument $Tokens $OpenIndex)) {
-        if ($field.Count -ge 3 -and $field[0].Type -eq 'Identifier' -and (Test-MSymbol $field[1] '=')) {
-            $fields[$field[0].Value] = Resolve-MValue (Get-MTokenRange $field 2 ($field.Count - 1)) $Scope $Context
-        }
-    }
-    $fields
-}
-
-function Get-MNavigationRecord {
-    # Indexer navigation: <expression>{[Schema="dbo", Item="Sales"]}. A list literal ({[...]} after '(' or ',')
-    # is not navigation, so the token before '{' must end an expression.
-    param([System.Collections.Generic.List[object]] $Tokens, $Scope, $Context)
-    for ($k = 1; $k -lt $Tokens.Count - 1; $k++) {
-        if (-not (Test-MSymbol $Tokens[$k] '{') -or -not (Test-MSymbol $Tokens[$k + 1] '[')) { continue }
-        $previous = $Tokens[$k - 1]
-        $endsExpression = (Test-MSymbol $previous ']', ')', '}') -or
-            ($previous.Type -eq 'Identifier' -and ($previous.Quoted -or -not $script:Keywords.Contains($previous.Value)))
-        if (-not $endsExpression) { continue }
-        $fields = ConvertFrom-MRecord $Tokens ($k + 1) $Scope $Context
-        if ($fields.Count -gt 0) { $fields }
-    }
-}
-
-#endregion
-
-#region Values and references
-
-function Test-MParameter {
-    param([string] $Name, $Context)
-    if (-not $Context.Shared.ContainsKey($Name)) { return $false }
-    $Context.Shared[$Name] -match 'IsParameterQuery\s*=\s*true'
-}
-
-function Get-MSharedToken {
-    param([string] $Name, $Context)
-    if (-not $Context.SharedTokens.ContainsKey($Name)) {
-        $Context.SharedTokens[$Name] = Get-MToken $Context.Shared[$Name]
-    }
-    , $Context.SharedTokens[$Name]
-}
-
-function Resolve-MValue {
-    # Resolves a text-valued M expression: literals, parameters, text steps and '&' concatenation.
-    # Returns $null when the value is computed at refresh time.
-    param([System.Collections.Generic.List[object]] $Tokens, $Scope, $Context, [int] $Depth = 0)
-    if ($null -eq $Tokens -or $Tokens.Count -eq 0 -or $Depth -gt 10) { return $null }
-
-    $parts = [System.Collections.Generic.List[object]]::new()
-    $current = [System.Collections.Generic.List[object]]::new()
-    $nesting = 0
-    foreach ($t in $Tokens) {
-        if (Test-MSymbol $t '(', '[', '{') { $nesting++ }
-        elseif (Test-MSymbol $t ')', ']', '}') { $nesting-- }
-        elseif ($nesting -eq 0 -and (Test-MSymbol $t '&')) {
-            $parts.Add($current)
-            $current = [System.Collections.Generic.List[object]]::new()
-            continue
-        }
-        $current.Add($t)
-    }
-    $parts.Add($current)
-
-    $builder = [System.Text.StringBuilder]::new()
-    foreach ($part in $parts) {
-        # "value" meta [IsParameterQuery=true, ...] is how a parameter stores its current value.
-        if ($part.Count -ge 2 -and $part[0].Type -eq 'String' -and (Test-MKeyword $part[1] 'meta')) {
-            [void]$builder.Append($part[0].Value)
-            continue
-        }
-        if ($part.Count -ne 1) { return $null }
-        $t = $part[0]
-        switch ($t.Type) {
-            'String' { [void]$builder.Append($t.Value) }
-            'Number' { [void]$builder.Append($t.Value) }
-            'Identifier' {
-                if (Test-MKeyword $t 'null') { return $null }
-                $resolved = $null
-                if ($null -ne $Scope -and $Scope.Steps.ContainsKey($t.Value)) {
-                    $resolved = Resolve-MValue $Scope.Steps[$t.Value] $Scope $Context ($Depth + 1)
-                }
-                elseif ($Context.Shared.ContainsKey($t.Value)) {
-                    $resolved = Resolve-MValue (Get-MSharedToken $t.Value $Context) $null $Context ($Depth + 1)
-                }
-                if ($null -eq $resolved) { $resolved = '{' + $t.Value + '}' }
-                [void]$builder.Append($resolved)
-            }
-            default { return $null }
-        }
-    }
-    $builder.ToString()
-}
-
-function Get-MReference {
-    # Names of local steps or shared queries referenced by a step. Parameters are values, not sources, so
-    # they are excluded; record field names and [Column] accessors are not references.
-    param([System.Collections.Generic.List[object]] $Tokens, $Scope, $Context)
-    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    $bracketDepth = 0
-    for ($k = 0; $k -lt $Tokens.Count; $k++) {
-        $t = $Tokens[$k]
-        if (Test-MSymbol $t '[') { $bracketDepth++; continue }
-        if (Test-MSymbol $t ']') { $bracketDepth--; continue }
-        if ($t.Type -ne 'Identifier') { continue }
-        if (-not $t.Quoted -and $script:Keywords.Contains($t.Value)) { continue }
-        if ($bracketDepth -gt 0) {
-            $next = if ($k + 1 -lt $Tokens.Count) { $Tokens[$k + 1] }
-            $previous = if ($k -gt 0) { $Tokens[$k - 1] }
-            if ((Test-MSymbol $next '=') -or ((Test-MSymbol $previous '[') -and (Test-MSymbol $next ']'))) { continue }
-        }
-        $name = $t.Value
-        $isReference = $Scope.Steps.ContainsKey($name) -or
-            ($Context.Shared.ContainsKey($name) -and -not (Test-MParameter $name $Context))
-        if ($isReference -and $seen.Add($name)) { $name }
-    }
-}
-
-#endregion
-
-#region Sources
-
-function New-MSource {
-    param([string] $Connector, [string] $SourceType)
-    @{
-        Connector = $Connector; SourceType = $SourceType
-        Server = ''; Database = ''; Schema = ''; Object = ''; ObjectKind = ''; ObjectOrigin = ''
-        Location = ''; NativeQuery = ''; Options = @{}
-    }
-}
-
-function Copy-MSource {
-    param([hashtable] $Source)
-    $copy = $Source.Clone()
-    $copy.Options = $Source.Options.Clone()
-    $copy
-}
-
-function Get-MConnectorDefinition {
-    param([string] $Name)
-    if ($script:ConnectorCatalog.ContainsKey($Name)) { return $script:ConnectorCatalog[$Name] }
-    if ($Name -cmatch '^([A-Za-z0-9]+)\.(Database|Databases|Contents|Feed|DataSource|Catalogs|Tables|Files|Data|Query)$' -and
-        -not $script:NonSourceNamespaces.Contains($Matches[1])) {
-        return @{ SourceType = $Matches[1]; Arguments = @('Server') }
-    }
-}
-
-function New-MSourceFromCall {
-    param([string] $Name, [hashtable] $Definition, $Arguments, $Scope, $Context)
-    $source = New-MSource -Connector $Name -SourceType $Definition.SourceType
-    for ($i = 0; $i -lt $Definition.Arguments.Count -and $i -lt $Arguments.Count; $i++) {
-        $value = Resolve-MValue $Arguments[$i] $Scope $Context
-        if ($null -eq $value) { continue }
-        $role = $Definition.Arguments[$i]
-        if ($role -in 'Server', 'Database', 'Object', 'Location', 'NativeQuery') { $source[$role] = $value }
-        else { $source.Options[$role] = $value }
-    }
-    foreach ($argument in $Arguments) {
-        if ($argument.Count -gt 0 -and (Test-MSymbol $argument[0] '[')) {
-            $options = ConvertFrom-MRecord $argument 0 $Scope $Context
-            if ($options['Query']) { $source.NativeQuery = $options['Query'] }
-        }
-    }
-    $source
-}
-
-function Set-MNavigation {
-    param([hashtable] $Source, [hashtable] $Fields)
-    if ($Source.Object) { return }
-    $kind = [string]$(if ($Fields.ContainsKey('Kind')) { $Fields['Kind'] } elseif ($Fields.ContainsKey('ItemKind')) { $Fields['ItemKind'] })
-
-    # Dataflow and Fabric item navigation: workspace > item > entity/table.
-    if ($Fields['workspaceId'] -and -not $Source.Server) { $Source.Server = $Fields['workspaceId'] }
-    foreach ($key in 'lakehouseId', 'warehouseId', 'dataflowId', 'datasetId', 'databaseId') {
-        if ($Fields[$key]) { $Source.Database = $Fields[$key] }
-    }
-    if ($Fields['entity']) { $Source.Object = $Fields['entity']; $Source.ObjectKind = 'Entity' }
-
-    if ($Fields.ContainsKey('Schema') -and $Fields['Schema']) { $Source.Schema = $Fields['Schema'] }
-    if ($Fields.ContainsKey('Item') -and $Fields['Item']) {
-        $Source.Object = $Fields['Item']
-        $Source.ObjectKind = $kind
-    }
-    elseif ($Fields.ContainsKey('Name') -and $Fields['Name']) {
-        $name = $Fields['Name']
-        switch -Regex ($kind) {
-            '^(Database|Catalog)$' { $Source.Database = $name; break }
-            '^Schema$' { $Source.Schema = $name; break }
-            '^$' {
-                if (-not $Source.Database -and $Source.Connector -match '\.(Databases|Catalogs)$') { $Source.Database = $name }
-                else { $Source.Object = $name }
-                break
-            }
-            default { $Source.Object = $name; $Source.ObjectKind = $kind }
-        }
-    }
-    elseif ($Fields.ContainsKey('Id') -and $Fields['Id'] -and $kind) {
-        if ($kind -match '^(Lakehouse|Warehouse|Database)$') { $Source.Database = $Fields['Id'] }
-        else { $Source.Object = $Fields['Id']; $Source.ObjectKind = $kind }
-    }
-}
-
-function Resolve-MStepSource {
-    param([string] $Name, $Scope, $Context)
-    $result = [System.Collections.Generic.List[hashtable]]::new()
-    if (-not $Scope.Cache.ContainsKey($Name)) {
-        if (-not $Scope.Resolving.Add($Name)) { return , $result }
-
-        $tokens = $Scope.Steps[$Name]
-        $sources = [System.Collections.Generic.List[hashtable]]::new()
-        $nativeQueries = [System.Collections.Generic.List[string]]::new()
-
-        for ($k = 0; $k -lt $tokens.Count - 1; $k++) {
-            $t = $tokens[$k]
-            if ($t.Type -ne 'Identifier' -or $t.Quoted -or -not (Test-MSymbol $tokens[$k + 1] '(')) { continue }
-            if ($t.Value -ceq 'Value.NativeQuery') {
-                $callArguments = Get-MCallArgument $tokens ($k + 1)
-                if ($callArguments.Count -ge 2) {
-                    $query = Resolve-MValue $callArguments[1] $Scope $Context
-                    if ($query) { $nativeQueries.Add($query) }
-                }
-                continue
-            }
-            $definition = Get-MConnectorDefinition $t.Value
-            if ($definition) {
-                $sources.Add((New-MSourceFromCall $t.Value $definition (Get-MCallArgument $tokens ($k + 1)) $Scope $Context))
-            }
-        }
-
-        foreach ($reference in @(Get-MReference $tokens $Scope $Context)) {
-            if ($reference -ceq $Name) { continue }
-            $referenced = if ($Scope.Steps.ContainsKey($reference)) { Resolve-MStepSource $reference $Scope $Context }
-            else { Resolve-MSharedSource $reference $Context }
-            foreach ($source in $referenced) { $sources.Add($source) }
-        }
-
-        foreach ($fields in @(Get-MNavigationRecord $tokens $Scope $Context)) {
-            foreach ($source in $sources) { Set-MNavigation $source $fields }
-        }
-        foreach ($query in $nativeQueries) {
-            foreach ($source in $sources) {
-                if (-not $source.NativeQuery -and -not $source.Object) { $source.NativeQuery = $query }
-            }
-        }
-
-        [void]$Scope.Resolving.Remove($Name)
-        $Scope.Cache[$Name] = $sources
-    }
-    foreach ($source in $Scope.Cache[$Name]) { $result.Add((Copy-MSource $source)) }
-    , $result
-}
-
-function Resolve-MSharedSource {
-    param([string] $Name, $Context)
-    $result = [System.Collections.Generic.List[hashtable]]::new()
-    if (-not $Context.SharedCache.ContainsKey($Name)) {
-        if ($Context.Depth -ge 30 -or -not $Context.Resolving.Add($Name)) { return , $result }
-        $Context.Depth++
-        try {
-            $Context.SharedCache[$Name] = Resolve-MExpressionSource (Get-MSharedToken $Name $Context) $Context
-        }
-        finally {
-            $Context.Depth--
-            [void]$Context.Resolving.Remove($Name)
-        }
-    }
-    foreach ($source in $Context.SharedCache[$Name]) { $result.Add((Copy-MSource $source)) }
-    , $result
-}
-
-function Resolve-MExpressionSource {
-    param([System.Collections.Generic.List[object]] $Tokens, $Context)
-    $split = Split-MLetExpression $Tokens
-    $scope = [pscustomobject]@{
-        Steps     = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
-        Cache     = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
-        Resolving = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-    }
-    foreach ($step in $split.Steps) { $scope.Steps[$step.Name] = $step.Body }
-
-    $final = '__result'
-    if ($split.Result.Count -eq 1 -and $split.Result[0].Type -eq 'Identifier' -and $scope.Steps.ContainsKey($split.Result[0].Value)) {
-        $final = $split.Result[0].Value
-    }
-    elseif ($split.Result.Count -gt 0) { $scope.Steps[$final] = $split.Result }
-    elseif ($split.Steps.Count -gt 0) { $final = $split.Steps[$split.Steps.Count - 1].Name }
-    else { return , [System.Collections.Generic.List[hashtable]]::new() }
-
-    Resolve-MStepSource $final $scope $Context
-}
-
-function Get-MSharedContext {
-    # Tables in one model share the same expressions dictionary, so the parsed shared queries are cached for
-    # as long as the caller keeps passing the same dictionary instance.
-    param([System.Collections.IDictionary] $SharedExpression)
-    $cache = $script:SharedContextCache
-    if ($null -ne $cache -and [object]::ReferenceEquals($cache.Source, $SharedExpression) -and $cache.Count -eq $SharedExpression.Count) {
-        return $cache.Context
-    }
-    $shared = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
-    foreach ($key in $SharedExpression.Keys) {
-        if ($null -ne $SharedExpression[$key]) { $shared[[string]$key] = [string]$SharedExpression[$key] }
-    }
-    $context = [pscustomobject]@{
-        Shared       = $shared
-        SharedTokens = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
-        SharedCache  = [System.Collections.Generic.Dictionary[string, object]]::new([System.StringComparer]::Ordinal)
-        Resolving    = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::Ordinal)
-        Depth        = 0
-    }
-    $script:SharedContextCache = [pscustomobject]@{ Source = $SharedExpression; Count = $SharedExpression.Count; Context = $context }
-    $context
-}
-
-function Get-MRefinedSourceType {
-    param([string] $SourceType, [string] $Server)
-    switch -Regex ($Server) {
-        '\.datawarehouse\.fabric\.microsoft\.com|\.datawarehouse\.pbidedicated\.windows\.net' { return 'Fabric SQL analytics endpoint / Warehouse' }
-        '\.database\.fabric\.microsoft\.com' { return 'Fabric SQL database' }
-        '\.sql\.azuresynapse\.net' { return 'Azure Synapse Analytics' }
-        '\.database\.windows\.net' { return 'Azure SQL Database' }
-        '^powerbi://' { return 'Power BI semantic model' }
-        '^asazure://' { return 'Azure Analysis Services' }
-    }
-    $SourceType
-}
-
-function ConvertTo-MSourceObject {
-    # Expands native SQL into one entry per referenced table and returns de-duplicated output objects.
-    param([System.Collections.Generic.List[hashtable]] $Sources)
-    $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($source in $Sources) {
-        $expanded = if ($source.Object) {
-            $source.ObjectOrigin = 'Navigation'
-            , $source
-        }
-        elseif ($source.NativeQuery) {
-            $objects = @(Get-SqlReferencedObject -Query $source.NativeQuery)
-            if ($objects.Count -eq 0) {
-                $source.ObjectOrigin = 'Native query (no tables parsed)'
-                , $source
-            }
-            else {
-                foreach ($object in $objects) {
-                    $copy = Copy-MSource $source
-                    if ($object.Database) { $copy.Database = $object.Database }
-                    $copy.Schema = $object.Schema
-                    $copy.Object = $object.Object
-                    $copy.ObjectKind = 'Referenced in native query'
-                    $copy.ObjectOrigin = 'Native query'
-                    , $copy
-                }
-            }
-        }
-        else {
-            $source.ObjectOrigin = 'Connection only'
-            , $source
-        }
-
-        foreach ($item in $expanded) {
-            $key = ($item.Connector, $item.Server, $item.Database, $item.Schema, $item.Object, $item.Location, $item.NativeQuery) -join [char]31
-            if (-not $seen.Add($key)) { continue }
-            [pscustomobject][ordered]@{
-                SourceType   = Get-MRefinedSourceType $item.SourceType $item.Server
-                Connector    = $item.Connector
-                Server       = $item.Server
-                Database     = $item.Database
-                Schema       = $item.Schema
-                Object       = $item.Object
-                ObjectKind   = $item.ObjectKind
-                ObjectOrigin = $item.ObjectOrigin
-                Location     = $item.Location
-                Options      = (@($item.Options.GetEnumerator() | Sort-Object Key | ForEach-Object { "$($_.Key)=$($_.Value)" }) -join '; ')
-                NativeQuery  = $item.NativeQuery
-            }
-        }
-    }
-}
-
-#endregion
-
-#region Public
-
-function Get-MQuerySource {
-    <#
-    .SYNOPSIS
-        Returns the upstream sources (server, database, schema, object) behind a Power Query (M) expression.
-    .PARAMETER Expression
-        The M expression of a table partition, refresh policy or shared query.
-    .PARAMETER SharedExpression
-        The model's shared expressions (named queries and parameters) as name -> M text. References to them
-        are followed. Pass the same dictionary instance for every table in a model so parsing is reused.
-    .EXAMPLE
-        Get-MQuerySource -Expression 'let Source = Sql.Database("sql01", "DW"), T = Source{[Schema="dbo",Item="Sales"]}[Data] in T'
-    #>
-    [CmdletBinding()]
-    [OutputType([pscustomobject])]
-    param(
-        [Parameter(Mandatory, ValueFromPipeline)]
-        [AllowEmptyString()]
-        [string] $Expression,
-
-        [System.Collections.IDictionary] $SharedExpression = @{}
-    )
-    process {
-        if ([string]::IsNullOrWhiteSpace($Expression)) { return }
-        $context = Get-MSharedContext $SharedExpression
-        $sources = Resolve-MExpressionSource (Get-MToken $Expression) $context
-        ConvertTo-MSourceObject $sources
-    }
-}
-
-function Get-NativeQuerySource {
-    <#
-    .SYNOPSIS
-        Builds source objects for a SQL query bound to a known connection, e.g. a legacy query partition.
-    #>
-    [CmdletBinding()]
-    [OutputType([pscustomobject])]
-    param(
-        [Parameter(Mandatory)][string] $Query,
-        [string] $SourceType = '',
-        [string] $Connector = '',
-        [string] $Server = '',
-        [string] $Database = ''
-    )
-    $source = New-MSource -Connector $Connector -SourceType $SourceType
-    $source.Server = $Server
-    $source.Database = $Database
-    $source.NativeQuery = $Query
-    $list = [System.Collections.Generic.List[hashtable]]::new()
-    $list.Add($source)
-    ConvertTo-MSourceObject $list
-}
-
-function Get-SqlReferencedObject {
-    <#
-    .SYNOPSIS
-        Lists the tables, views and procedures named after FROM, JOIN and EXEC in a SQL statement.
-    .DESCRIPTION
-        A pattern match, not a SQL parser. CTE names, temp tables and table variables are excluded. Dynamic
-        SQL and objects referenced only inside functions or views are not visible.
-    #>
-    [CmdletBinding()]
-    [OutputType([pscustomobject])]
-    param(
-        [Parameter(Mandatory, ValueFromPipeline)]
-        [AllowEmptyString()]
-        [string] $Query
-    )
-    process {
-        $sql = [regex]::Replace($Query, '--[^\r\n]*|/\*.*?\*/', ' ', 'Singleline')
-        $sql = [regex]::Replace($sql, "'(?:[^']|'')*'", "''")
-
-        $part = '(?:\[[^\]]+\]|"[^"]+"|`[^`]+`|[\p{L}_@#$][\p{L}\p{Nd}_@#$]*)'
-        $qualifiedName = "$part(?:\s*\.\s*$part){0,3}"
-
-        $cteNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-        foreach ($m in [regex]::Matches($sql, "(?i)(?:\bwith\s+(?:recursive\s+)?|,\s*)($part)\s*(?:\([^)]*\)\s*)?as\s*\(")) {
-            [void]$cteNames.Add($m.Groups[1].Value.Trim('[', ']', '"', '`'))
-        }
-
-        $pattern = "(?i)(?<!\b(?:year|month|day|hour|minute|second|epoch|quarter|week|leading|trailing|both)\s+)\b(?:from|join)\s+(?<name>$qualifiedName)|\bexec(?:ute)?\s+(?<name>$qualifiedName)"
-        $excluded = @('select', 'lateral', 'unnest', 'values', 'dual', 'openjson', 'openquery', 'openrowset', 'string_split')
-        $seen = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-
-        foreach ($m in [regex]::Matches($sql, $pattern)) {
-            $parts = @([regex]::Matches($m.Groups['name'].Value, $part) | ForEach-Object {
-                    $_.Value -replace '^[\["`](.*)[\]"`]$', '$1'
-                })
-            $object = $parts[-1]
-            if ($object -match '^[#@]' -or $excluded -contains $object) { continue }
-            if ($parts.Count -eq 1 -and $cteNames.Contains($object)) { continue }
-            if (-not $seen.Add(($parts -join '.'))) { continue }
-            [pscustomobject][ordered]@{
-                Server   = if ($parts.Count -ge 4) { $parts[-4] } else { '' }
-                Database = if ($parts.Count -ge 3) { $parts[-3] } else { '' }
-                Schema   = if ($parts.Count -ge 2) { $parts[-2] } else { '' }
-                Object   = $object
-            }
-        }
-    }
-}
-
-#endregion
-
-Export-ModuleMember -Function Get-MQuerySource, Get-NativeQuerySource, Get-SqlReferencedObject
-'@ }
-    @{ Path = 'src\modules\RunProgress.psm1'; Text = @'
-#Requires -Version 5.1
-<#
-.SYNOPSIS
-    Compact progress for a run made of numbered steps: one line per step, updated in place, ending with its result.
-
-.DESCRIPTION
-    In a console window each step is a single line that shows a live count while it runs and its result when it
-    ends:
-
-        [4/8] Listing workspaces ...................... done, 212 workspaces
-        [5/8] Scanning workspaces ..................... 100/212 workspaces
-
-    When output is redirected (a log file, a scheduled task, a test), live updates are skipped and each finished
-    step is written once to the information stream.
-#>
-
-$script:State = $null
-$script:LabelWidth = 46
-
-function Format-RunDuration {
-    [CmdletBinding()]
-    [OutputType([string])]
-    param([Parameter(Mandatory)][TimeSpan] $Duration)
-    if ($Duration.TotalSeconds -lt 60) { return '{0}s' -f [int][math]::Floor([math]::Max(0, $Duration.TotalSeconds)) }
-    if ($Duration.TotalMinutes -lt 60) { return '{0}m {1:00}s' -f [int][math]::Floor($Duration.TotalMinutes), $Duration.Seconds }
-    '{0}h {1:00}m' -f [int][math]::Floor($Duration.TotalHours), $Duration.Minutes
-}
-
-function Format-RunStepLine {
-    [CmdletBinding()]
-    [OutputType([string])]
-    param(
-        [int] $Index,
-        [int] $Total,
-        [string] $Name,
-        [string] $Status,
-        [int] $Width = 0
-    )
-    $label = '  [{0}/{1}] {2} ' -f $Index, $Total, $Name
-    if ($label.Length -lt $script:LabelWidth) { $label += '.' * ($script:LabelWidth - $label.Length) }
-    $line = if ($Status) { "$label $Status" } else { $label }
-    if ($Width -gt 10 -and $line.Length -gt $Width) { $line = $line.Substring(0, $Width - 3) + '...' }
-    $line
-}
-
-function Get-ConsoleWidth {
-    try { [math]::Max(40, [Console]::WindowWidth - 1) } catch { 119 }
-}
-
-function Start-RunProgress {
-    <#
-    .SYNOPSIS
-        Begins a run of -TotalSteps steps. Style Auto draws in place in a console window and writes plain lines
-        otherwise.
-    #>
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][int] $TotalSteps,
-        [ValidateSet('Auto', 'Console', 'Plain')][string] $Style = 'Auto'
-    )
-    if ($Style -eq 'Auto') {
-        $Style = 'Plain'
-        if ($Host.Name -eq 'ConsoleHost') {
-            try { if (-not [Console]::IsOutputRedirected) { $Style = 'Console' } }
-            catch { Write-Verbose 'No console attached; using plain progress lines.' }
-        }
-    }
-    $script:State = [pscustomobject]@{
-        Style     = $Style
-        Total     = $TotalSteps
-        Index     = 0
-        Name      = ''
-        Open      = $false
-        StepTimer = $null
-        LastDraw  = [Diagnostics.Stopwatch]::StartNew()
-        RunTimer  = [Diagnostics.Stopwatch]::StartNew()
-    }
-}
-
-function Show-RunStep {
-    param([string] $Status, [switch] $Force)
-    $state = $script:State
-    if ($state.Style -ne 'Console') { return }
-    if (-not $Force -and $state.LastDraw.ElapsedMilliseconds -lt 150) { return }
-    $width = Get-ConsoleWidth
-    $line = Format-RunStepLine $state.Index $state.Total $state.Name $Status $width
-    Write-Host ("`r" + $line.PadRight($width)) -NoNewline
-    $state.LastDraw.Restart()
-}
-
-function Start-RunStep {
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string] $Name)
-    $state = $script:State
-    if ($state.Open) { Complete-RunStep }
-    $state.Index++
-    $state.Name = $Name
-    $state.Open = $true
-    $state.StepTimer = [Diagnostics.Stopwatch]::StartNew()
-    Show-RunStep -Force
-}
-
-function Update-RunStep {
-    <#
-    .SYNOPSIS
-        Shows a live status for the current step, e.g. "37/120 semantic models". Redraws at most every 150 ms
-        unless -Force.
-    #>
-    [CmdletBinding()]
-    param([string] $Status, [switch] $Force)
-    if ($script:State -and $script:State.Open) { Show-RunStep -Status $Status -Force:$Force }
-}
-
-function Complete-RunStep {
-    [CmdletBinding()]
-    param(
-        [string] $Result = 'done',
-        [ValidateSet('Success', 'Warning', 'Failure')][string] $Outcome = 'Success'
-    )
-    $state = $script:State
-    if (-not $state -or -not $state.Open) { return }
-    $text = $Result
-    if ($state.StepTimer.Elapsed.TotalSeconds -ge 2) { $text += " ($(Format-RunDuration $state.StepTimer.Elapsed))" }
-
-    if ($state.Style -eq 'Console') {
-        $width = Get-ConsoleWidth
-        $label = Format-RunStepLine $state.Index $state.Total $state.Name
-        $room = [math]::Max(0, $width - $label.Length - 1)
-        if ($text.Length -gt $room) { $text = $text.Substring(0, [math]::Max(0, $room - 3)) + '...' }
-        $color = switch ($Outcome) { 'Success' { 'Green' } 'Warning' { 'Yellow' } default { 'Red' } }
-        Write-Host ("`r" + $label + ' ') -NoNewline
-        Write-Host $text.PadRight($room) -ForegroundColor $color
-    }
-    else {
-        Write-Information (Format-RunStepLine $state.Index $state.Total $state.Name $text) -InformationAction Continue
-    }
-    $state.Open = $false
-}
-
-function Stop-RunStep {
-    <#
-    .SYNOPSIS
-        Marks the current step as failed, so an error message that follows starts on its own line.
-    #>
-    [CmdletBinding()]
-    param()
-    if ($script:State -and $script:State.Open) { Complete-RunStep -Result 'failed' -Outcome Failure }
-}
-
-function Get-RunElapsed {
-    [CmdletBinding()]
-    [OutputType([string])]
-    param()
-    if ($script:State) { Format-RunDuration $script:State.RunTimer.Elapsed } else { '0s' }
-}
-
-function Write-RunMessage {
-    <#
-    .SYNOPSIS
-        Writes a summary line in the run's style: to the console with an optional colour, or to the information
-        stream.
-    #>
-    [CmdletBinding()]
-    param(
-        [string] $Text = '',
-        [ValidateSet('', 'Green', 'Yellow', 'Red', 'Cyan', 'Gray')][string] $Color = ''
-    )
-    if ($script:State -and $script:State.Style -eq 'Console') {
-        if ($Color) { Write-Host $Text -ForegroundColor $Color } else { Write-Host $Text }
-    }
-    else {
-        Write-Information $Text -InformationAction Continue
-    }
-}
-
-Export-ModuleMember -Function Format-RunDuration, Format-RunStepLine, Start-RunProgress, Start-RunStep, Update-RunStep,
-    Complete-RunStep, Stop-RunStep, Get-RunElapsed, Write-RunMessage
-'@ }
-    @{ Path = 'src\modules\LauncherArguments.psm1'; Text = @'
-#Requires -Version 5.1
-<#
-.SYNOPSIS
-    Reads the arguments given to PowerBI-Lineage.cmd into parameters for Get-PbiReportLineage.ps1.
-
-.DESCRIPTION
-    The arguments are parsed with the PowerShell parser and only literal values are accepted: text, numbers, lists and
-    $true / $false. Nothing in them is executed, so an argument such as "$(Remove-Item ...)" or "; del ..." is
-    rejected rather than run.
-#>
-
-$script:AllowedParameters = @(
-    'Mode', 'WorkspaceId', 'OutputPath', 'ExcelPath', 'SkipExcel', 'TenantId', 'ClientId', 'CertificateThumbprint',
-    'ConfigPath', 'IncludePersonalWorkspaces', 'IncludeAutoDateTables', 'SkipGatewayLookup', 'SaveRawResponses',
-    'ScanBatchSize', 'Verbose'
-)
-
-function Get-LiteralArgumentValue {
-    param([System.Management.Automation.Language.Ast] $Ast)
-    switch ($Ast.GetType().Name) {
-        'StringConstantExpressionAst' { return $Ast.Value }
-        'ConstantExpressionAst' { return $Ast.Value }
-        'ExpandableStringExpressionAst' {
-            if ($Ast.NestedExpressions.Count -gt 0) { throw "Arguments must be plain values; '$($Ast.Extent.Text)' contains an expression." }
-            return $Ast.Value
-        }
-        'ArrayLiteralAst' { return , @($Ast.Elements | ForEach-Object { Get-LiteralArgumentValue $_ }) }
-        'VariableExpressionAst' {
-            if ($Ast.VariablePath.UserPath -eq 'true') { return $true }
-            if ($Ast.VariablePath.UserPath -eq 'false') { return $false }
-        }
-    }
-    throw "Arguments must be plain values; '$($Ast.Extent.Text)' is not."
-}
-
-function ConvertFrom-LauncherArgument {
-    <#
-    .SYNOPSIS
-        Converts a command line such as "-Mode Admin -WorkspaceId a,b -SkipExcel" into a parameter hashtable.
-    .OUTPUTS
-        A hashtable to splat. It holds only the key Help when help was asked for (/?, -?, -h, -Help, --help).
-    #>
-    [CmdletBinding()]
-    [OutputType([hashtable])]
-    param([AllowEmptyString()][string] $CommandLine)
-
-    $parameters = @{}
-    $trimmed = "$CommandLine".Trim()
-    if (-not $trimmed) { return $parameters }
-    if ($trimmed -in '/?', '-?', '-h', '/h', '-help', '/help', '--help') { return @{ Help = $true } }
-
-    $tokens = $null
-    $errors = $null
-    $ast = [System.Management.Automation.Language.Parser]::ParseInput("Invoke-Lineage $trimmed", [ref] $tokens, [ref] $errors)
-    if ($errors.Count -gt 0) { throw "Could not read the arguments: $($errors[0].Message)" }
-
-    $statements = @($ast.EndBlock.Statements)
-    $pipeline = if ($statements.Count -eq 1) { $statements[0] }
-    if (-not ($pipeline -is [System.Management.Automation.Language.PipelineAst]) -or $pipeline.PipelineElements.Count -ne 1 -or
-        -not ($pipeline.PipelineElements[0] -is [System.Management.Automation.Language.CommandAst])) {
-        throw 'Arguments must be parameter names and values only, for example: -Mode Admin -TenantId <tenant>.'
-    }
-
-    $pending = $null
-    $elements = $pipeline.PipelineElements[0].CommandElements
-    for ($i = 1; $i -lt $elements.Count; $i++) {
-        $element = $elements[$i]
-        if ($element -is [System.Management.Automation.Language.CommandParameterAst]) {
-            $name = $script:AllowedParameters | Where-Object { $_ -eq $element.ParameterName } | Select-Object -First 1
-            if (-not $name) {
-                if ($element.ParameterName -eq 'ClientSecret') {
-                    throw 'Do not put the client secret on the command line, where job logs and process lists can show it. Set the PBI_CLIENT_SECRET environment variable instead, or use -CertificateThumbprint or -ConfigPath.'
-                }
-                throw "Unknown parameter -$($element.ParameterName). Valid parameters: -$($script:AllowedParameters -join ', -')."
-            }
-            if ($element.Argument) {
-                $parameters[$name] = Get-LiteralArgumentValue $element.Argument
-                $pending = $null
-            }
-            else {
-                $parameters[$name] = $true
-                $pending = $name
-            }
-        }
-        else {
-            if (-not $pending) { throw "Unexpected value '$($element.Extent.Text)'. Put a parameter name such as -ExcelPath before it." }
-            $parameters[$pending] = Get-LiteralArgumentValue $element
-            $pending = $null
-        }
-    }
-    $parameters
-}
-
-function Get-LauncherUsage {
-    [CmdletBinding()]
-    [OutputType([string])]
-    param()
-    @'
-PowerBI-Lineage.cmd: Power BI report lineage
-
-Double-click, or run with no arguments, to answer questions interactively.
-Run with arguments for unattended use (orchestrators, Task Scheduler, SQL Agent): no questions, no pause,
-exit code 0 on success and 1 on failure. Unattended runs sign in as a service principal.
-
-  PowerBI-Lineage.cmd -Mode Admin -TenantId <tenant> -ClientId <app-id> -CertificateThumbprint <thumbprint>
-                      -ExcelPath "\\share\bi\PowerBI-Lineage.xlsx"
-
-  set PBI_CLIENT_SECRET=<secret from your credential store>
-  PowerBI-Lineage.cmd -Mode Admin -TenantId <tenant> -ClientId <app-id> -ExcelPath "D:\Reports\Lineage.xlsx"
-
-Parameters:
-  -Mode Admin|User|Auto          Admin: whole tenant. User: workspaces the identity belongs to. Default Auto.
-  -TenantId, -ClientId           Service principal. Secret from PBI_CLIENT_SECRET, or use:
-  -CertificateThumbprint         Certificate in the CurrentUser or LocalMachine personal store.
-  -ConfigPath <file>             config.json with tenantId and servicePrincipal settings.
-  -ExcelPath <folder|file.xlsx>  Folder: writes PowerBI-Lineage_DDMMYYHHMM.xlsx. File: replaced each run.
-  -OutputPath <folder>           Folder for the JSON. Default: the Excel file's folder, or Documents\Power BI Lineage.
-  -WorkspaceId <id>,<id>         Only these workspaces.
-  -SkipExcel                     JSON and CSV only.
-  -IncludePersonalWorkspaces, -IncludeAutoDateTables, -SkipGatewayLookup, -SaveRawResponses,
-  -ScanBatchSize <1-100>, -Verbose
-<~LINEAGE-ESCAPE~>'@
-}
-
-Export-ModuleMember -Function ConvertFrom-LauncherArgument, Get-LauncherUsage
-'@ }
-    @{ Path = 'src\Get-PbiReportLineage.ps1'; Text = @'
-#Requires -Version 5.1
-
-<#
-.SYNOPSIS
-    End-to-end data lineage for Power BI reports: report > semantic model > table > source server, database,
-    schema and table/view > gateway.
-
-    Easiest start: double-click PowerBI-Lineage.cmd in the tool folder and answer the questions.
-
-.DESCRIPTION
-    For every report the caller can reach, finds the semantic model (dataset) behind it, the tables in that
-    model, and for each table the upstream object that populates it. The upstream object is read from the
-    table's Power Query (M) expression; gateway and connection details come from the model's data sources.
-
-    Collection modes:
-
-      Admin  Admin scanner API (WorkspaceInfo). Covers every workspace in the tenant in a few calls.
-             Needs Fabric Administrator, or a service principal allowed to use read-only admin APIs, plus the
-             tenant settings "Enhance admin APIs responses with detailed metadata" and "Enhance admin APIs
-             responses with DAX and mashup expressions". Without those settings reports and models still
-             appear, but tables and source objects do not.
-
-      User   Only the workspaces the signed-in identity belongs to. Tables and M expressions are read with the
-             DAX INFO functions through executeQueries, which needs write permission on the model (Contributor
-             or above on its workspace) and the "Dataset Execute Queries REST API" tenant setting.
-
-      Auto   Default. Uses Admin when the caller is a tenant admin, otherwise User.
-
-    Sign-in, whichever suits the run:
-
-      User account       No sign-in parameters. Reuses the current Power BI session or prompts. A Power BI /
-                         Fabric administrator gets every workspace in the tenant (Admin mode).
-      Service principal  -TenantId and -ClientId with -ClientSecret or -CertificateThumbprint, or -ConfigPath.
-                         For Admin mode the service principal must be allowed to use read-only admin APIs and
-                         must not have Power BI admin-consent API permissions on its app registration.
-
-    Output:
-
-      report-lineage.json  Everything collected, untruncated: run details, one lineage row per
-                           report x table x source object, the source-object view, and every semantic model
-                           with its tables, M expressions and data sources. Written first.
-      report-lineage.csv   The lineage rows (the All Lineage sheet) untruncated, named after the workbook and
-                           saved next to it.
-      report-lineage.xlsx  Built from the JSON by Export-PbiLineageWorkbook.ps1: a Summary sheet, an
-                           All Lineage sheet, a Source Objects sheet and one sheet per workspace.
-
-    The script is read-only.
-
-.PARAMETER Mode
-    Auto (default), Admin or User.
-
-.PARAMETER WorkspaceId
-    Limit the run to these workspace IDs. Reports in them are still traced to models in other workspaces.
-
-.PARAMETER OutputPath
-    Folder for the JSON; each run writes a timestamped subfolder. Defaults to the git-ignored output/ folder
-    inside the tool folder.
-
-.PARAMETER ExcelPath
-    Where to write the Excel workbook: a folder, where each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (the run's
-    local date and time), or a .xlsx file, which is replaced on every run. The CSV is named after the workbook.
-    Defaults to report-lineage.xlsx next to the JSON.
-
-.PARAMETER SkipExcel
-    Write the JSON only, e.g. where the ImportExcel module is not installed. Build the workbook later with
-    Export-PbiLineageWorkbook.ps1 -JsonPath <json> -ExcelPath <xlsx>.
-
-.PARAMETER TenantId
-    Tenant ID or domain. Required for service principal sign-in.
-
-.PARAMETER ClientId
-    Application (client) ID of the service principal. Supplying it selects service principal sign-in.
-
-.PARAMETER ClientSecret
-    Client secret for the service principal, as a SecureString. If omitted with -ClientId and no
-    -CertificateThumbprint, the PBI_CLIENT_SECRET environment variable is used.
-
-.PARAMETER CertificateThumbprint
-    Thumbprint of a certificate for the service principal, installed with its private key in the CurrentUser
-    or LocalMachine personal store.
-
-.PARAMETER ConfigPath
-    Path to config.json (copy config.example.json from the tool folder). Signs in as the service principal it describes,
-    using servicePrincipal.certificateThumbprint or servicePrincipal.secretFrom.
-
-.PARAMETER IncludePersonalWorkspaces
-    Admin mode: include personal workspaces in the scan. User mode: include your own My workspace.
-
-.PARAMETER IncludeAutoDateTables
-    Include the LocalDateTable_* / DateTableTemplate_* tables that Power BI Desktop's auto date/time creates.
-
-.PARAMETER SkipGatewayLookup
-    Do not call the gateway APIs to turn gateway and gateway data source IDs into names.
-
-.PARAMETER SaveRawResponses
-    Also write the raw scanner results (Admin) or INFO query results (User) to a raw/ subfolder, for
-    troubleshooting.
-
-.PARAMETER ScanBatchSize
-    Workspaces per admin scan request, 1-100.
-
-.PARAMETER PassThru
-    Return the lineage rows to the pipeline as well as writing files.
-
-.PARAMETER Interactive
-    Ask how to sign in, which reports to cover and where to save the workbook, instead of taking parameters.
-    Used by PowerBI-Lineage.cmd.
-
-.PARAMETER Unattended
-    For orchestrators and scheduled jobs: never prompt, and refuse to open a browser sign-in, so a job fails with a
-    clear message instead of hanging. Requires service principal sign-in. Unless -OutputPath is given, the JSON
-    goes next to -ExcelPath, or to Documents\Power BI Lineage. PowerBI-Lineage.cmd adds this switch whenever it is
-    run with arguments.
-
-.EXAMPLE
-    ./Get-PbiReportLineage.ps1 -ExcelPath 'C:\Reports\PowerBI-Lineage.xlsx'
-
-    Signs in with your own account (prompting if needed). As a Power BI administrator this covers every
-    workspace in the tenant.
-
-.EXAMPLE
-    $secret = Read-Host 'Client secret' -AsSecureString
-    ./Get-PbiReportLineage.ps1 -Mode Admin -TenantId contoso.onmicrosoft.com `
-        -ClientId 00000000-0000-0000-0000-000000000000 -ClientSecret $secret
-
-.EXAMPLE
-    ./Get-PbiReportLineage.ps1 -Mode Admin -TenantId <tenant-id> -ClientId <app-id> `
-        -CertificateThumbprint 38DA4BED389A014E69A6E6D8AE56761E85F0DFA4 -ExcelPath '\\share\bi\lineage.xlsx'
-
-    Scheduled run as a service principal with a certificate.
-
-.EXAMPLE
-    $env:PBI_CLIENT_SECRET = '<secret>'
-    ./Get-PbiReportLineage.ps1 -Mode Admin -ConfigPath ../config.json
-
-.EXAMPLE
-    ./Get-PbiReportLineage.ps1 -Mode User -WorkspaceId 00000000-0000-0000-0000-000000000000 -SkipExcel -PassThru |
-        Where-Object ReportName -eq 'Sales Overview' |
-        Format-Table TableName, Server, Database, Schema, SourceObject, GatewayName
-
-.NOTES
-    Runs in Windows PowerShell 5.1 and PowerShell 7. Missing modules (MicrosoftPowerBIMgmt.Profile, ImportExcel)
-    are installed for the current user on first run; no administrator rights are needed.
-
-    Source objects come from reading M code, not from running it. Tables built from dynamic navigation or
-    function results show the connection without an object; the full expression is kept in SourceExpression.
-    Reports published as part of an app are skipped in Admin mode because they duplicate the originals.
-#>
-[CmdletBinding()]
-param(
-    [ValidateSet('Auto', 'Admin', 'User')]
-    [string] $Mode = 'Auto',
-
-    [string[]] $WorkspaceId,
-
-    [string] $OutputPath = ([System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, '..', 'output'))),
-
-    [string] $ExcelPath,
-
-    [switch] $SkipExcel,
-
-    [string] $TenantId,
-
-    [string] $ClientId,
-
-    [securestring] $ClientSecret,
-
-    [string] $CertificateThumbprint,
-
-    [string] $ConfigPath,
-
-    [switch] $IncludePersonalWorkspaces,
-
-    [switch] $IncludeAutoDateTables,
-
-    [switch] $SkipGatewayLookup,
-
-    [switch] $SaveRawResponses,
-
-    [ValidateRange(1, 100)]
-    [int] $ScanBatchSize = 100,
-
-    [switch] $PassThru,
-
-    [switch] $Interactive,
-
-    [switch] $Unattended
-)
-
-$ErrorActionPreference = 'Stop'
-# PowerShell's own progress bars (web requests, module installs) are noisy, and slow on 5.1; RunProgress replaces them.
-$ProgressPreference = 'SilentlyContinue'
-if ($PSVersionTable.PSEdition -eq 'Desktop') {
-    # Windows PowerShell 5.1 otherwise serialises some arrays as {"value":[...],"Count":n}.
-    Remove-TypeData -TypeName System.Array -ErrorAction SilentlyContinue
-}
-$modulePath = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, 'modules'))
-Import-Module (Join-Path $modulePath 'Prerequisites.psm1') -Force
-Import-Module (Join-Path $modulePath 'PowerBIRest.psm1') -Force
-Import-Module (Join-Path $modulePath 'MQueryLineage.psm1') -Force
-Import-Module (Join-Path $modulePath 'RunProgress.psm1') -Force
-
-$script:StorageModeNames = @{ 0 = 'Import'; 1 = 'DirectQuery'; 2 = 'Default'; 3 = 'Push'; 4 = 'Dual'; 5 = 'Direct Lake' }
-$script:PartitionTypeNames = @{ 1 = 'Query'; 2 = 'Calculated'; 3 = 'None'; 4 = 'M'; 5 = 'Entity'; 6 = 'PolicyRange'; 7 = 'CalculationGroup'; 8 = 'Inferred' }
-$script:AutoDateTablePattern = '^(LocalDateTable_|DateTableTemplate_)'
-$script:NoMetadataHint = 'No table metadata returned. Admin mode: enable the tenant settings "Enhance admin APIs responses with detailed metadata" and "...with DAX and mashup expressions" (models may need a refresh afterwards). User mode: needs Contributor or above on the model''s workspace.'
-$script:GatewayNames = $null
-$script:GatewayDatasourceNames = @{}
-$script:TableSourceCache = @{}
-$script:RawFolder = $null
-$script:IsServicePrincipal = $false
-$script:SignedInAs = ''
-$script:Issues = [System.Collections.Generic.List[object]]::new()
-$script:UnnamedGateways = [System.Collections.Generic.HashSet[string]]::new()
-
-#region Helpers
-
-function Add-Issue {
-    # Problems that don't stop the run (a model you can't read, a workspace you can't open) are collected here
-    # instead of printed. They are counted at the end and saved to the JSON and the Issues sheet.
-    param([string] $Area, [string] $Item, [string] $Message)
-    $script:Issues.Add([pscustomobject][ordered]@{ Area = $Area; Item = $Item; Message = $Message })
-    Write-Verbose "$Area '$Item': $Message"
-}
-
-function Get-StatusCode {
-    param([System.Management.Automation.ErrorRecord] $ErrorRecord)
-    $ErrorRecord.Exception.Data['StatusCode']
-}
-
-function Save-Raw {
-    param([string] $Name, $Content)
-    if (-not $script:RawFolder) { return }
-    $Content | ConvertTo-Json -Depth 50 | Set-Content -Path (Join-Path $script:RawFolder $Name) -Encoding utf8
-}
-
-function Get-WorkspacePath {
-    # 'me' stands for the caller's My workspace, whose endpoints have no groups/{id} prefix.
-    param([string] $Id)
-    if ($Id -eq 'me') { '' } else { "groups/$Id/" }
-}
-
-function Resolve-ConfigSecret {
-    param([string] $SecretFrom)
-    switch -Regex ($SecretFrom) {
-        '^env:(.+)$' {
-            $value = [Environment]::GetEnvironmentVariable($Matches[1])
-            if (-not $value) { throw "Environment variable '$($Matches[1])' named in the config is not set." }
-            return ConvertTo-SecureString $value -AsPlainText -Force
-        }
-        '^keyvault:([^/]+)/(.+)$' {
-            return (Get-AzKeyVaultSecret -VaultName $Matches[1] -Name $Matches[2] -ErrorAction Stop).SecretValue
-        }
-        default { throw "Unsupported secretFrom '$SecretFrom'. Use env:<NAME> or keyvault:<vault>/<secret>." }
-    }
-}
-
-function Read-MenuChoice {
-    param([string] $Question, [string[]] $Options)
-    Write-Host ''
-    Write-Host $Question
-    for ($i = 0; $i -lt $Options.Count; $i++) { Write-Host ('  [{0}] {1}' -f ($i + 1), $Options[$i]) }
-    while ($true) {
-        $answer = Read-Host "Choose 1-$($Options.Count) (Enter = 1)"
-        if (-not $answer) { return 1 }
-        $number = $answer.Trim() -as [int]
-        if ($number -ge 1 -and $number -le $Options.Count) { return $number }
-        Write-Host "Please type a number from 1 to $($Options.Count)." -ForegroundColor Yellow
-    }
-}
-
-function Read-RequiredValue {
-    param([string] $Prompt)
-    while ($true) {
-        $value = (Read-Host $Prompt).Trim()
-        if ($value) { return $value }
-        Write-Host 'A value is required.' -ForegroundColor Yellow
-    }
-}
-
-function Read-InteractiveOption {
-    # Fills the script parameters from questions, for people who double-click the launcher.
-    Write-Host ''
-    Write-Host 'Power BI report lineage' -ForegroundColor Cyan
-    Write-Host 'Traces every report to its semantic model, tables, and the database objects and gateways behind them.'
-
-    $signIn = Read-MenuChoice 'How do you want to sign in?' @(
-        'With my own account (a browser sign-in window opens)',
-        'As a service principal, with a client secret',
-        'As a service principal, with a certificate')
-    if ($signIn -gt 1) {
-        $script:TenantId = Read-RequiredValue 'Tenant ID (or domain, e.g. contoso.onmicrosoft.com)'
-        $script:ClientId = Read-RequiredValue 'Application (client) ID'
-        if ($signIn -eq 2) { $script:ClientSecret = Read-Host 'Client secret (hidden)' -AsSecureString }
-        else { $script:CertificateThumbprint = Read-RequiredValue 'Certificate thumbprint' }
-    }
-
-    $scope = Read-MenuChoice 'Which reports should be included?' @(
-        'Every workspace in the tenant (needs Power BI administrator rights)',
-        'Only workspaces I am a member of')
-    $script:Mode = if ($scope -eq 1) { 'Admin' } else { 'User' }
-
-    $folder = Join-Path ([Environment]::GetFolderPath('MyDocuments')) 'Power BI Lineage'
-    $default = Resolve-ExcelPath $folder
-    Write-Host ''
-    $answer = (Read-Host "Save the Excel file to (Enter = $default)").Trim().Trim('"')
-    $script:ExcelPath = if ($answer) { Resolve-ExcelPath $answer } else { $default }
-    $script:OutputPath = Split-Path -Parent ([System.IO.Path]::GetFullPath($script:ExcelPath))
-    Write-Host ''
-}
-
-function Connect-ServicePrincipal {
-    param(
-        [Parameter(Mandatory)][string] $Tenant,
-        [Parameter(Mandatory)][string] $AppId,
-        [securestring] $Secret,
-        [string] $Thumbprint
-    )
-    if ($Thumbprint) {
-        $null = Connect-PowerBIServiceAccount -ServicePrincipal -ApplicationId $AppId -CertificateThumbprint $Thumbprint -Tenant $Tenant -WarningAction SilentlyContinue
-    }
-    else {
-        $null = Connect-PowerBIServiceAccount -ServicePrincipal -Credential ([pscredential]::new($AppId, $Secret)) -Tenant $Tenant -WarningAction SilentlyContinue
-    }
-    $script:IsServicePrincipal = $true
-    $script:SignedInAs = "Service principal $AppId"
-}
-
-function Connect-LineageSession {
-    if ($ClientId) {
-        if (-not $TenantId) { throw '-TenantId is required with -ClientId.' }
-        $secret = $ClientSecret
-        if (-not $secret -and -not $CertificateThumbprint) {
-            if (-not $env:PBI_CLIENT_SECRET) { throw 'Service principal sign-in needs -ClientSecret, -CertificateThumbprint or the PBI_CLIENT_SECRET environment variable.' }
-            $secret = ConvertTo-SecureString $env:PBI_CLIENT_SECRET -AsPlainText -Force
-        }
-        Connect-ServicePrincipal -Tenant $TenantId -AppId $ClientId -Secret $secret -Thumbprint $CertificateThumbprint
-        return
-    }
-
-    if ($ConfigPath) {
-        $config = Get-Content -Raw -Path $ConfigPath | ConvertFrom-Json
-        $principal = $config.servicePrincipal
-        $secret = if (-not $principal.certificateThumbprint) { Resolve-ConfigSecret $principal.secretFrom }
-        Connect-ServicePrincipal -Tenant $config.tenantId -AppId $principal.appId -Secret $secret -Thumbprint $principal.certificateThumbprint
-        return
-    }
-
-    try {
-        $null = Get-PowerBIAccessToken -ErrorAction Stop
-        Write-Verbose 'Reusing the existing Power BI session; run Disconnect-PowerBIServiceAccount first to sign in as someone else.'
-        $script:SignedInAs = 'Existing Power BI session'
-        return
-    }
-    catch { Write-Verbose 'No existing Power BI session.' }
-
-    if ($Unattended) {
-        throw 'Unattended runs sign in as a service principal: pass -TenantId and -ClientId with -CertificateThumbprint (or set PBI_CLIENT_SECRET), or pass -ConfigPath.'
-    }
-    Update-RunStep 'complete the sign-in in the window that opens' -Force
-    $account = Connect-PowerBIServiceAccount -WarningAction SilentlyContinue
-    $script:SignedInAs = if ($account.UserName) { "User $($account.UserName)" } else { 'User account' }
-}
-
-function Resolve-CollectionMode {
-    if ($Mode -eq 'User') { return 'User' }
-    try {
-        $null = Invoke-PbiRestMethod -Path 'admin/groups?$top=1'
-        return 'Admin'
-    }
-    catch {
-        if ((Get-StatusCode $_) -notin 401, 403) { throw }
-        if ($Mode -eq 'Admin') {
-            $who = if ($script:IsServicePrincipal) {
-                'This service principal cannot use the Power BI admin APIs. Add it to a security group allowed by the tenant setting "Service principals can access read-only admin APIs", and remove any Power BI admin-consent API permissions from its app registration.'
-            }
-            else { 'This account is not a Power BI / Fabric administrator.' }
-            throw "$who To cover only the workspaces this identity is a member of, use -Mode User (or choose that option when asked)."
-        }
-        Write-Verbose 'Not a Power BI administrator; tracing the workspaces this account is a member of (User mode).'
-        return 'User'
-    }
-}
-
-function New-LineageModel {
-    [pscustomobject]@{
-        Workspaces    = @{}
-        Reports       = [System.Collections.Generic.List[object]]::new()
-        Datasets      = @{}
-        DatasetErrors = @{}
-        DatasetIndex  = @{}
-    }
-}
-
-function New-ReportEntry {
-    param($Report, [string] $WorkspaceId)
-    [pscustomobject]@{
-        Id                 = $Report.id
-        Name               = $Report.name
-        ReportType         = if ($Report.reportType) { $Report.reportType } else { 'PowerBIReport' }
-        WorkspaceId        = $WorkspaceId
-        DatasetId          = [string]$Report.datasetId
-        DatasetWorkspaceId = if ($Report.datasetWorkspaceId) { $Report.datasetWorkspaceId } else { $WorkspaceId }
-    }
-}
-
-#endregion
-
-#region Admin mode: scanner API
-
-function Get-AdminWorkspaceId {
-    if ($WorkspaceId) { return @($WorkspaceId) }
-    $excludePersonal = (-not $IncludePersonalWorkspaces).ToString().ToLowerInvariant()
-    @(Invoke-PbiRestMethod -Path "admin/workspaces/modified?excludePersonalWorkspaces=$excludePersonal&excludeInActiveWorkspaces=true") |
-        ForEach-Object { $_ } | ForEach-Object id
-}
-
-function Get-AdminLineageModel {
-    param([string[]] $Ids)
-    $model = New-LineageModel
-    if (-not $Ids) { return $model }
-
-    $script:ScanTotal = $Ids.Count
-    $script:ScanDone = 0
-    $onProgress = { param($status) Update-RunStep ('{0:N0}/{1:N0} workspaces, {2}' -f $script:ScanDone, $script:ScanTotal, $status) }
-    $batch = 0
-    Invoke-PbiWorkspaceScan -WorkspaceId $Ids -BatchSize $ScanBatchSize -OnProgress $onProgress | ForEach-Object {
-        $result = $_
-        $batch++
-        Save-Raw "scan-$batch.json" $result
-        $script:ScanDone = [math]::Min($script:ScanTotal, $batch * $ScanBatchSize)
-        Update-RunStep ('{0:N0}/{1:N0} workspaces' -f $script:ScanDone, $script:ScanTotal) -Force
-
-        $instances = @{}
-        foreach ($instance in @($result.datasourceInstances) + @($result.misconfiguredDatasourceInstances)) {
-            if ($instance) { $instances[$instance.datasourceId] = $instance }
-        }
-
-        foreach ($workspace in @($result.workspaces | Where-Object { $_ })) {
-            $model.Workspaces[$workspace.id] = [pscustomobject]@{ Id = $workspace.id; Name = $workspace.name; Type = $workspace.type }
-
-            foreach ($report in @($workspace.reports | Where-Object { $_ -and -not $_.appId })) {
-                $model.Reports.Add((New-ReportEntry $report $workspace.id))
-            }
-
-            foreach ($dataset in @($workspace.datasets | Where-Object { $_ })) {
-                $shared = @{}
-                foreach ($expression in @($dataset.expressions | Where-Object { $_ })) { $shared[$expression.name] = $expression.expression }
-
-                $tables = foreach ($table in @($dataset.tables | Where-Object { $_ })) {
-                    [pscustomobject]@{
-                        Name             = $table.name
-                        IsHidden         = [bool]$table.isHidden
-                        StorageMode      = ''
-                        PartitionTypes   = ''
-                        Expressions      = @($table.source | Where-Object { $_.expression } | ForEach-Object expression)
-                        EntityExpression = $null
-                    }
-                }
-
-                $usages = @($dataset.datasourceUsages) + @($dataset.misconfiguredDatasourceUsages)
-                $datasources = foreach ($usage in $usages) {
-                    if ($usage -and $instances.ContainsKey($usage.datasourceInstanceId)) { $instances[$usage.datasourceInstanceId] }
-                }
-
-                $model.Datasets[$dataset.id] = [pscustomobject]@{
-                    Id                = $dataset.id
-                    Name              = $dataset.name
-                    WorkspaceId       = $workspace.id
-                    StorageMode       = if ($dataset.ContentProviderType) { $dataset.ContentProviderType } else { [string]$dataset.targetStorageMode }
-                    Tables            = @($tables)
-                    SharedExpressions = $shared
-                    Datasources       = @($datasources)
-                    MetadataError     = $dataset.schemaRetrievalError
-                }
-            }
-        }
-    }
-    $model
-}
-
-#endregion
-
-#region User mode: workspace APIs + DAX INFO functions
-
-function Invoke-DaxQuery {
-    param([string] $DatasetPath, [string] $Query)
-    $body = @{ queries = @(@{ query = $Query }); serializerSettings = @{ includeNulls = $true } }
-    $response = Invoke-PbiRestMethod -Method Post -Path "$DatasetPath/executeQueries" -Body $body
-    $result = $response.results | Select-Object -First 1
-    if ($result.error) { throw "DAX query failed: $($result.error | ConvertTo-Json -Depth 6 -Compress)" }
-    foreach ($row in @($result.tables[0].rows | Where-Object { $_ })) {
-        # Columns come back as "[Name]"; strip the brackets.
-        $clean = [ordered]@{}
-        foreach ($property in $row.PSObject.Properties) { $clean[($property.Name -replace '^.*\[([^\]]*)\]$', '$1')] = $property.Value }
-        [pscustomobject]$clean
-    }
-}
-
-function Get-UserDatasetDetail {
-    param($Dataset, [string] $WorkspaceId)
-    $datasetPath = "$(Get-WorkspacePath $WorkspaceId)datasets/$($Dataset.id)"
-
-    $datasources = @()
-    try { $datasources = @((Invoke-PbiRestMethod -Path "$datasetPath/datasources").value | Where-Object { $_ }) }
-    catch { Add-Issue 'Semantic model' $Dataset.name "Data sources could not be read. $($_.Exception.Message)" }
-
-    $tables = @()
-    $shared = @{}
-    $metadataError = $null
-    try {
-        $infoTables = @(Invoke-DaxQuery $datasetPath 'EVALUATE INFO.TABLES()')
-        $partitions = @(Invoke-DaxQuery $datasetPath 'EVALUATE INFO.PARTITIONS()')
-        $expressions = @(Invoke-DaxQuery $datasetPath 'EVALUATE INFO.EXPRESSIONS()')
-        $policies = @()
-        if ($partitions | Where-Object { $_.Type -eq 6 }) {
-            try { $policies = @(Invoke-DaxQuery $datasetPath 'EVALUATE INFO.REFRESHPOLICIES()') }
-            catch { Write-Verbose "[$($Dataset.name)] refresh policies unavailable: $($_.Exception.Message)" }
-        }
-        Save-Raw "dataset-$($Dataset.id).json" @{ tables = $infoTables; partitions = $partitions; expressions = $expressions; policies = $policies }
-
-        $expressionNameById = @{}
-        foreach ($expression in $expressions) {
-            $shared[[string]$expression.Name] = [string]$expression.Expression
-            $expressionNameById[[string]$expression.ID] = [string]$expression.Name
-        }
-        $policyByTable = @{}
-        foreach ($policy in $policies) { if ($policy.SourceExpression) { $policyByTable[[string]$policy.TableID] = [string]$policy.SourceExpression } }
-        $partitionsByTable = @{}
-        foreach ($partition in $partitions) {
-            $key = [string]$partition.TableID
-            if (-not $partitionsByTable.ContainsKey($key)) { $partitionsByTable[$key] = [System.Collections.Generic.List[object]]::new() }
-            $partitionsByTable[$key].Add($partition)
-        }
-
-        $tables = foreach ($table in $infoTables) {
-            $tableKey = [string]$table.ID
-            $tablePartitions = if ($partitionsByTable.ContainsKey($tableKey)) { $partitionsByTable[$tableKey] } else { @() }
-
-            $tableExpressions = [System.Collections.Generic.List[string]]::new()
-            foreach ($partition in $tablePartitions) {
-                if ($partition.QueryDefinition -and -not $tableExpressions.Contains([string]$partition.QueryDefinition)) {
-                    $tableExpressions.Add([string]$partition.QueryDefinition)
-                }
-            }
-            if ($policyByTable.ContainsKey($tableKey) -and -not $tableExpressions.Contains($policyByTable[$tableKey])) {
-                $tableExpressions.Add($policyByTable[$tableKey])
-            }
-            $entity = $tablePartitions | Where-Object { $_.Type -eq 5 -and $null -ne $_.ExpressionSourceID } | Select-Object -First 1
-
-            [pscustomobject]@{
-                Name             = [string]$table.Name
-                IsHidden         = [bool]$table.IsHidden
-                StorageMode      = (@($tablePartitions | Where-Object { $null -ne $_.Mode } | ForEach-Object {
-                            $name = $script:StorageModeNames[[int]$_.Mode]; if ($name) { $name } else { "Mode $($_.Mode)" }
-                        } | Sort-Object -Unique) -join ', ')
-                PartitionTypes   = (@($tablePartitions | Where-Object { $null -ne $_.Type } | ForEach-Object {
-                            $name = $script:PartitionTypeNames[[int]$_.Type]; if ($name) { $name } else { "Type $($_.Type)" }
-                        } | Sort-Object -Unique) -join ', ')
-                Expressions      = @($tableExpressions)
-                EntityExpression = if ($entity) { $expressionNameById[[string]$entity.ExpressionSourceID] }
-            }
-        }
-    }
-    catch {
-        $metadataError = $_.Exception.Message
-        Add-Issue 'Semantic model' $Dataset.name "Tables could not be read (needs Contributor or above on its workspace). $metadataError"
-    }
-
-    [pscustomobject]@{
-        Id                = $Dataset.id
-        Name              = $Dataset.name
-        WorkspaceId       = $WorkspaceId
-        StorageMode       = [string]$Dataset.targetStorageMode
-        Tables            = @($tables)
-        SharedExpressions = $shared
-        Datasources       = @($datasources)
-        MetadataError     = $metadataError
-    }
-}
-
-function Get-UserWorkspaceTarget {
-    # Lists the workspaces this identity belongs to, records their names on the model, and returns the IDs to read.
-    param($Model)
-    $allGroups = @(Get-PbiPagedValue -Path 'groups')
-    foreach ($group in $allGroups) {
-        $Model.Workspaces[$group.id] = [pscustomobject]@{ Id = $group.id; Name = $group.name; Type = $group.type }
-    }
-    $Model.Workspaces['me'] = [pscustomobject]@{ Id = 'me'; Name = 'My workspace'; Type = 'PersonalGroup' }
-
-    $targets = @(@(if ($WorkspaceId) { $allGroups | Where-Object { $_.id -in $WorkspaceId } } else { $allGroups }) | ForEach-Object id)
-    if ($WorkspaceId) {
-        foreach ($missing in $WorkspaceId | Where-Object { $_ -notin $targets }) {
-            Add-Issue 'Workspace' $missing 'Not visible to this account, so it was skipped.'
-        }
-    }
-    if ($IncludePersonalWorkspaces -and $script:IsServicePrincipal) {
-        Add-Issue 'Workspace' 'My workspace' 'A service principal has no My workspace; -IncludePersonalWorkspaces was ignored.'
-    }
-    elseif ($IncludePersonalWorkspaces) { $targets = @('me') + $targets }
-    , $targets
-}
-
-function Read-UserReport {
-    param($Model, [string[]] $Targets)
-    $i = 0
-    foreach ($id in $Targets) {
-        $i++
-        Update-RunStep ('{0:N0}/{1:N0} workspaces, {2:N0} reports so far' -f $i, $Targets.Count, $Model.Reports.Count)
-        $prefix = Get-WorkspacePath $id
-        try {
-            $reports = @((Invoke-PbiRestMethod -Path "${prefix}reports").value | Where-Object { $_ })
-            foreach ($report in $reports) { $Model.Reports.Add((New-ReportEntry $report $id)) }
-            if ($reports.Count -gt 0) {
-                foreach ($dataset in @((Invoke-PbiRestMethod -Path "${prefix}datasets").value | Where-Object { $_ })) {
-                    $Model.DatasetIndex[$dataset.id] = $dataset
-                }
-            }
-        }
-        catch { Add-Issue 'Workspace' $Model.Workspaces[$id].Name "Skipped: reports could not be listed. $($_.Exception.Message)" }
-    }
-}
-
-function Read-UserDataset {
-    param($Model)
-    $referenced = @($Model.Reports | Where-Object DatasetId | Group-Object DatasetId)
-    $i = 0
-    foreach ($group in $referenced) {
-        $i++
-        Update-RunStep ('{0:N0}/{1:N0} semantic models' -f $i, $referenced.Count)
-        $datasetId = $group.Name
-        $datasetWorkspaceId = $group.Group[0].DatasetWorkspaceId
-        $dataset = $Model.DatasetIndex[$datasetId]
-        if (-not $dataset) {
-            try { $dataset = Invoke-PbiRestMethod -Path "$(Get-WorkspacePath $datasetWorkspaceId)datasets/$datasetId" }
-            catch {
-                $message = "Semantic model not accessible to this account. $($_.Exception.Message)"
-                $Model.DatasetErrors[$datasetId] = $message
-                Add-Issue 'Semantic model' $datasetId $message
-                continue
-            }
-        }
-        $Model.Datasets[$datasetId] = Get-UserDatasetDetail $dataset $datasetWorkspaceId
-    }
-}
-
-#endregion
-
-#region Lineage rows
-
-function Format-Endpoint {
-    param([string] $Value)
-    if (-not $Value) { return '' }
-    $Value.Trim().ToLowerInvariant() -replace '^tcp:', '' -replace ',\d+$', '' -replace '/+$', ''
-}
-
-function Test-Unresolved {
-    param([string] $Value)
-    [string]::IsNullOrEmpty($Value) -or $Value -match '\{[^}]+\}'
-}
-
-function Find-BoundDatasource {
-    # Matches a parsed source to one of the model's bound data sources, which carry the gateway binding.
-    param($Source, $Datasources)
-    $candidates = @($Datasources | Where-Object { $_ })
-    if ($candidates.Count -eq 0) { return }
-
-    $server = if (Test-Unresolved $Source.Server) { '' } else { Format-Endpoint $Source.Server }
-    $location = if (Test-Unresolved $Source.Location) { '' } else { Format-Endpoint $Source.Location }
-    $best = $null
-    $bestScore = 0
-    foreach ($datasource in $candidates) {
-        $details = $datasource.connectionDetails
-        $score = 0
-        if ($server -and (Format-Endpoint $details.server) -eq $server) {
-            $score = 2
-            if ($Source.Database -and $details.database) { $score = if ($Source.Database -eq $details.database) { 3 } else { 0 } }
-        }
-        elseif ($location) {
-            foreach ($endpoint in @($details.url, $details.path) | ForEach-Object { Format-Endpoint $_ } | Where-Object { $_ }) {
-                if ($location.StartsWith($endpoint) -or $endpoint.StartsWith($location)) { $score = 2 }
-            }
-        }
-        if ($score -gt $bestScore) { $best = $datasource; $bestScore = $score }
-    }
-    if (-not $best -and -not $server -and -not $location -and $candidates.Count -eq 1) { $best = $candidates[0] }
-    $best
-}
-
-function Get-GatewayName {
-    param([string] $GatewayId)
-    if (-not $GatewayId -or $SkipGatewayLookup) { return '' }
-    if ($null -eq $script:GatewayNames) {
-        $script:GatewayNames = @{}
-        try {
-            foreach ($gateway in @((Invoke-PbiRestMethod -Path 'gateways').value | Where-Object { $_ })) {
-                $script:GatewayNames[$gateway.id] = $gateway.name
-            }
-        }
-        catch { Write-Verbose "Gateway list unavailable: $($_.Exception.Message)" }
-    }
-    $name = [string]$script:GatewayNames[$GatewayId]
-    if (-not $name) { [void]$script:UnnamedGateways.Add($GatewayId) }
-    $name
-}
-
-function Get-GatewayDatasourceName {
-    param([string] $GatewayId, [string] $DatasourceId)
-    if (-not $GatewayId -or -not $DatasourceId -or $SkipGatewayLookup) { return '' }
-    $key = "$GatewayId/$DatasourceId"
-    if (-not $script:GatewayDatasourceNames.ContainsKey($key)) {
-        $script:GatewayDatasourceNames[$key] = try {
-            [string](Invoke-PbiRestMethod -Path "gateways/$GatewayId/datasources/$DatasourceId").datasourceName
-        }
-        catch { Write-Verbose "Gateway data source $key unavailable: $($_.Exception.Message)"; '' }
-    }
-    $script:GatewayDatasourceNames[$key]
-}
-
-function Get-TableSource {
-    param($Dataset, $Table)
-    $key = "$($Dataset.Id)|$($Table.Name)"
-    if ($script:TableSourceCache.ContainsKey($key)) { return $script:TableSourceCache[$key] }
-
-    $sources = [System.Collections.Generic.List[object]]::new()
-    foreach ($expression in $Table.Expressions) {
-        if ($expression -match '^\s*(?:select|with)\s') {
-            # Legacy query partition: plain SQL bound to the model's (single) data source.
-            $datasource = if (@($Dataset.Datasources).Count -eq 1) { $Dataset.Datasources[0] }
-            $parameters = @{
-                Query      = $expression
-                Connector  = 'Query partition'
-                SourceType = [string]$datasource.datasourceType
-                Server     = [string]$datasource.connectionDetails.server
-                Database   = [string]$datasource.connectionDetails.database
-            }
-            foreach ($source in Get-NativeQuerySource @parameters) { $sources.Add($source) }
-        }
-        else {
-            foreach ($source in Get-MQuerySource -Expression $expression -SharedExpression $Dataset.SharedExpressions) { $sources.Add($source) }
-        }
-    }
-
-    if ($sources.Count -eq 0 -and $Table.EntityExpression) {
-        # Direct Lake / entity partition: the connection is a shared expression; the entity is assumed to share the table's name.
-        $reference = '#"' + $Table.EntityExpression.Replace('"', '""') + '"'
-        foreach ($source in Get-MQuerySource -Expression $reference -SharedExpression $Dataset.SharedExpressions) {
-            if (-not $source.Object) {
-                $source.Object = $Table.Name
-                $source.ObjectOrigin = 'Direct Lake entity (name assumed from table)'
-            }
-            $sources.Add($source)
-        }
-    }
-
-    $script:TableSourceCache[$key] = $sources
-    $sources
-}
-
-function Select-Value {
-    param([string] $Preferred, [string] $Fallback)
-    if (Test-Unresolved $Preferred) {
-        if ($Fallback) { return $Fallback }
-        return [string]$Preferred
-    }
-    $Preferred
-}
-
-function New-LineageRow {
-    param(
-        [System.Collections.IDictionary] $Base,
-        $Table,
-        $Source,
-        $Datasource,
-        [string] $Notes = ''
-    )
-    $details = $Datasource.connectionDetails
-    $gatewayId = [string]$Datasource.gatewayId
-    if ($gatewayId -eq [guid]::Empty.ToString()) { $gatewayId = '' }
-    $datasourceId = [string]$Datasource.datasourceId
-
-    $expression = if ($Table) { $Table.Expressions -join "`n----`n" } else { '' }
-
-    $row = [ordered]@{}
-    foreach ($key in $Base.Keys) { $row[$key] = $Base[$key] }
-    $row.TableName = [string]$Table.Name
-    $row.TableIsHidden = if ($Table) { [bool]$Table.IsHidden } else { $null }
-    $row.TableStorageMode = [string]$Table.StorageMode
-    $row.SourceType = if ($Source.SourceType) { $Source.SourceType } else { [string]$Datasource.datasourceType }
-    $row.Connector = [string]$Source.Connector
-    $row.Server = Select-Value $Source.Server $details.server
-    $row.Database = Select-Value $Source.Database $details.database
-    $row.Schema = [string]$Source.Schema
-    $row.SourceObject = [string]$Source.Object
-    $row.SourceObjectKind = [string]$Source.ObjectKind
-    $row.ObjectOrigin = [string]$Source.ObjectOrigin
-    $row.Location = Select-Value $Source.Location $(if ($details.url) { $details.url } else { $details.path })
-    $row.ConnectorOptions = [string]$Source.Options
-    $row.NativeQuery = [string]$Source.NativeQuery
-    $row.DatasourceType = [string]$Datasource.datasourceType
-    $row.GatewayId = $gatewayId
-    $row.GatewayName = Get-GatewayName $gatewayId
-    $row.GatewayDatasourceId = if ($gatewayId) { $datasourceId } else { '' }
-    $row.GatewayDatasourceName = Get-GatewayDatasourceName $gatewayId $datasourceId
-    $row.ConnectionDetails = if ($details) { $details | ConvertTo-Json -Compress -Depth 4 } else { '' }
-    # Y when anything about the connection mentions Snowflake, including ODBC connections to it.
-    $isSnowflake = @($row.SourceType, $row.Connector, $row.Server, $row.DatasourceType, $row.ConnectionDetails) -match 'snowflake'
-    $row.IsSnowflakeConnection = if ($isSnowflake) { 'Y' } else { 'N' }
-    $row.Notes = $Notes
-    $row.SourceExpression = $expression
-    [pscustomobject]$row
-}
-
-function Get-SourceNote {
-    param($Source, $Datasource)
-    $notes = [System.Collections.Generic.List[string]]::new()
-    if ($Source.ObjectOrigin -eq 'Connection only') {
-        $notes.Add('Source object not identified from the M code (whole database/file/feed, or dynamic navigation); see SourceExpression.')
-    }
-    if ($Source.ObjectOrigin -like 'Native query*') {
-        $notes.Add('Object read from native SQL; views or procedures may hide further tables.')
-    }
-    if ((Test-Unresolved $Source.Server) -and $Source.Server -and -not $Datasource) {
-        $notes.Add('Server comes from a parameter that could not be resolved statically.')
-    }
-    $notes -join ' '
-}
-
-function Get-TableNote {
-    param($Table)
-    if ($Table.PartitionTypes -match 'CalculationGroup') { return 'Calculation group; no external source.' }
-    if ($Table.PartitionTypes -match 'Calculated') { return 'Calculated table (DAX); built from other model tables.' }
-    if (@($Table.Expressions).Count -eq 0) { return 'No source expression returned for this table.' }
-    'No external source recognised in the expression (DAX calculated table, #table literal or unsupported connector); see SourceExpression.'
+    $logFolder = Split-Path -Parent $logPath
+    if ($logFolder -and -not (Test-Path -LiteralPath $logFolder)) { $null = New-Item -ItemType Directory -Path $logFolder -Force }
+    [IO.File]::WriteAllText($logPath, ($output + $errorText))
 }
+catch { $logPath = '(log not written: ' + $_.Exception.Message + ')' }
 
-function Get-LineageRow {
-    param($Model)
-    $index = 0
-    foreach ($report in $Model.Reports) {
-        $index++
-        Update-RunStep ('{0:N0}/{1:N0} reports' -f $index, $Model.Reports.Count)
-        $base = [ordered]@{
-            WorkspaceName        = [string]$Model.Workspaces[$report.WorkspaceId].Name
-            WorkspaceId          = $report.WorkspaceId
-            ReportName           = $report.Name
-            ReportId             = $report.Id
-            ReportType           = $report.ReportType
-            DatasetName          = ''
-            DatasetId            = $report.DatasetId
-            DatasetWorkspaceName = ''
-            DatasetWorkspaceId   = $report.DatasetWorkspaceId
-            DatasetStorageMode   = ''
-        }
-
-        if (-not $report.DatasetId) {
-            $note = if ($report.ReportType -eq 'PaginatedReport') { 'Paginated report: queries are embedded in the RDL, so lineage stops at the connection.' }
-            else { 'Report is not bound to a semantic model.' }
-            $datasources = @()
-            try {
-                $datasources = @((Invoke-PbiRestMethod -Path "$(Get-WorkspacePath $report.WorkspaceId)reports/$($report.Id)/datasources").value | Where-Object { $_ })
-            }
-            catch {
-                $note += " Data sources unavailable: $($_.Exception.Message)"
-                Add-Issue 'Report' $report.Name "Data sources of this paginated report could not be read. $($_.Exception.Message)"
-            }
-            if ($datasources.Count -eq 0) { New-LineageRow $base -Notes $note }
-            foreach ($datasource in $datasources) { New-LineageRow $base -Datasource $datasource -Notes $note }
-            continue
-        }
-
-        $dataset = $Model.Datasets[$report.DatasetId]
-        if (-not $dataset) {
-            $note = $Model.DatasetErrors[$report.DatasetId]
-            if (-not $note) { $note = 'Semantic model is outside the scanned workspaces or not accessible.' }
-            New-LineageRow $base -Notes $note
-            continue
-        }
-
-        $base.DatasetName = $dataset.Name
-        $base.DatasetWorkspaceId = $dataset.WorkspaceId
-        $base.DatasetWorkspaceName = [string]$Model.Workspaces[$dataset.WorkspaceId].Name
-        $base.DatasetStorageMode = $dataset.StorageMode
-
-        $tables = @($dataset.Tables | Where-Object { $_ -and ($IncludeAutoDateTables -or $_.Name -notmatch $script:AutoDateTablePattern) })
-        if ($tables.Count -eq 0) {
-            $note = if ($dataset.MetadataError) { "No table metadata: $($dataset.MetadataError)" } else { $script:NoMetadataHint }
-            if (@($dataset.Datasources).Count -eq 0) { New-LineageRow $base -Notes $note }
-            foreach ($datasource in $dataset.Datasources) { New-LineageRow $base -Datasource $datasource -Notes $note }
-            continue
-        }
-
-        foreach ($table in $tables) {
-            $sources = Get-TableSource $dataset $table
-            if ($sources.Count -eq 0) {
-                New-LineageRow $base -Table $table -Notes (Get-TableNote $table)
-                continue
-            }
-            foreach ($source in $sources) {
-                $datasource = Find-BoundDatasource $source $dataset.Datasources
-                New-LineageRow $base -Table $table -Source $source -Datasource $datasource -Notes (Get-SourceNote $source $datasource)
-            }
-        }
-    }
-}
-
-#endregion
-
-#region Output
-
-function Get-SourceObjectSummary {
-    param([object[]] $Rows)
-    $Rows | Where-Object { $_.SourceObject -or $_.Server -or $_.Location } |
-        Group-Object SourceType, Server, Database, Schema, SourceObject, Location |
-        ForEach-Object {
-            $group = $_.Group
-            $first = $group[0]
-            [pscustomobject][ordered]@{
-                SourceType   = $first.SourceType
-                Server       = $first.Server
-                Database     = $first.Database
-                Schema       = $first.Schema
-                SourceObject = $first.SourceObject
-                Location     = $first.Location
-                Gateways     = (@($group.GatewayName | Where-Object { $_ } | Sort-Object -Unique) -join '; ')
-                ReportCount  = @($group.ReportId | Sort-Object -Unique).Count
-                ModelCount   = @($group.DatasetId | Where-Object { $_ } | Sort-Object -Unique).Count
-                Reports      = (@($group | ForEach-Object { "$($_.WorkspaceName) / $($_.ReportName)" } | Sort-Object -Unique) -join '; ')
-                ModelTables  = (@($group | Where-Object TableName | ForEach-Object { "$($_.DatasetName)[$($_.TableName)]" } | Sort-Object -Unique) -join '; ')
-            }
-        } |
-        Sort-Object SourceType, Server, Database, Schema, SourceObject
-}
-
-function New-LineageDocument {
-    # The complete, untruncated record of a run. The Excel workbook is built from this document alone.
-    param([object[]] $Rows, $Model, [string] $CollectionMode)
-    $traced = @($Rows | Where-Object SourceObject).Count
-    $connectionOnly = @($Rows | Where-Object { -not $_.SourceObject -and ($_.Server -or $_.Location) }).Count
-
-    [ordered]@{
-        schemaVersion  = 1
-        generatedAtUtc = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-        collectionMode = $CollectionMode
-        signedInAs     = $script:SignedInAs
-        workspaceScope = if ($WorkspaceId) { @($WorkspaceId) } else { 'All accessible workspaces' }
-        summary        = [ordered]@{
-            workspaces          = @($Rows.WorkspaceId | Sort-Object -Unique).Count
-            reports             = @($Rows.ReportId | Sort-Object -Unique).Count
-            semanticModels      = $Model.Datasets.Count
-            tables              = [int](@($Model.Datasets.Values | ForEach-Object { @($_.Tables).Count }) | Measure-Object -Sum).Sum
-            lineageRows         = $Rows.Count
-            tracedToObject      = $traced
-            connectionOnly      = $connectionOnly
-            noExternalSource    = $Rows.Count - $traced - $connectionOnly
-            issues              = $script:Issues.Count
-        }
-        issues         = @($script:Issues)
-        workspaces     = @($Model.Workspaces.Values | Sort-Object Name | ForEach-Object {
-                [ordered]@{ id = $_.Id; name = $_.Name; type = $_.Type }
-            })
-        lineage        = $Rows
-        sourceObjects  = @(Get-SourceObjectSummary $Rows)
-        semanticModels = @($Model.Datasets.Values | Sort-Object Name | ForEach-Object {
-                [ordered]@{
-                    id                = $_.Id
-                    name              = $_.Name
-                    workspaceId       = $_.WorkspaceId
-                    workspaceName     = [string]$Model.Workspaces[$_.WorkspaceId].Name
-                    storageMode       = $_.StorageMode
-                    metadataError     = $_.MetadataError
-                    sharedExpressions = $_.SharedExpressions
-                    datasources       = @($_.Datasources)
-                    tables            = @($_.Tables | ForEach-Object {
-                            [ordered]@{
-                                name           = $_.Name
-                                isHidden       = $_.IsHidden
-                                storageMode    = $_.StorageMode
-                                partitionTypes = $_.PartitionTypes
-                                expressions    = @($_.Expressions)
-                            }
-                        })
-                }
-            })
-    }
-}
-
-#endregion
-
-function Format-Count {
-    param([int] $Count, [string] $Singular, [string] $Plural = "${Singular}s")
-    '{0:N0} {1}' -f $Count, $(if ($Count -eq 1) { $Singular } else { $Plural })
-}
-
-function Resolve-ExcelPath {
-    # A folder gets a workbook named after the run's local date and time; a .xlsx path is used as given.
-    param([string] $Path)
-    $Path = $Path.Trim().Trim('"')
-    if ($Path -match '\.xlsx$') { return $Path }
-    if ((Split-Path -Leaf $Path) -match '\.[A-Za-z]{2,5}$') { throw "ExcelPath must be a folder or a .xlsx file: $Path" }
-    Join-Path $Path ('PowerBI-Lineage_{0:ddMMyyHHmm}.xlsx' -f (Get-Date))
-}
-
-if ($Interactive -and $Unattended) { throw '-Interactive and -Unattended cannot be used together.' }
-if ($ExcelPath) { $ExcelPath = Resolve-ExcelPath $ExcelPath }
-if ($Unattended -and -not $PSBoundParameters.ContainsKey('OutputPath')) {
-    # The default output folder sits inside the script's own folder, which PowerBI-Lineage.cmd replaces on update.
-    $OutputPath = if ($ExcelPath) {
-        Split-Path -Parent $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($ExcelPath)
-    }
-    else {
-        $documents = [Environment]::GetFolderPath('MyDocuments')
-        if ($documents) { Join-Path $documents 'Power BI Lineage' } else { Join-Path (Get-Location).Path 'Power BI Lineage' }
-    }
-}
-
-if ($Interactive) { Read-InteractiveOption }
-else { Write-RunMessage ''; Write-RunMessage 'Power BI report lineage' -Color Cyan }
-
-Start-RunProgress -TotalSteps 8
-try {
-    Start-RunStep 'Checking prerequisites'
-    $required = @('MicrosoftPowerBIMgmt.Profile')
-    if (-not $SkipExcel) { $required += 'ImportExcel' }
-    foreach ($name in $required) {
-        if (-not (Find-RequiredModule -Name $name)) { Update-RunStep "installing $name (first run only)" -Force }
-        Initialize-RequiredModule -Name $name
-    }
-    Complete-RunStep
-
-    Start-RunStep 'Signing in'
-    Connect-LineageSession
-    Complete-RunStep "done, $($script:SignedInAs)"
-
-    Start-RunStep 'Checking access'
-    $effectiveMode = Resolve-CollectionMode
-    Complete-RunStep $(if ($effectiveMode -eq 'Admin') { 'done, whole tenant (administrator)' } else { 'done, workspaces this account is a member of' })
-
-    $runFolder = Join-Path $OutputPath ('report-lineage-{0:yyyyMMdd-HHmmss}' -f (Get-Date))
-    $null = New-Item -ItemType Directory -Path $runFolder -Force
-    if ($SaveRawResponses) {
-        $script:RawFolder = Join-Path $runFolder 'raw'
-        $null = New-Item -ItemType Directory -Path $script:RawFolder -Force
-    }
-
-    Start-RunStep 'Listing workspaces'
-    if ($effectiveMode -eq 'Admin') {
-        $model = New-LineageModel
-        $workspaceIds = @(Get-AdminWorkspaceId)
-        if ($workspaceIds.Count -eq 0) { Add-Issue 'Workspace' '' 'No workspaces were found to scan.' }
-    }
-    else {
-        $model = New-LineageModel
-        $workspaceIds = Get-UserWorkspaceTarget $model
-    }
-    Complete-RunStep "done, $(Format-Count $workspaceIds.Count 'workspace')"
-
-    if ($effectiveMode -eq 'Admin') {
-        Start-RunStep 'Scanning workspaces'
-        $model = Get-AdminLineageModel -Ids $workspaceIds
-        Complete-RunStep "done, $(Format-Count $model.Reports.Count 'report'), $(Format-Count $model.Datasets.Count 'semantic model')"
-
-        Start-RunStep 'Reading tables and data sources'
-        $withoutTables = @($model.Datasets.Values | Where-Object { @($_.Tables).Count -eq 0 })
-        foreach ($dataset in $withoutTables | Where-Object MetadataError) {
-            Add-Issue 'Semantic model' $dataset.Name "Tables could not be read. $($dataset.MetadataError)"
-        }
-        $silent = @($withoutTables | Where-Object { -not $_.MetadataError }).Count
-        if ($silent -gt 0 -and $silent -eq $model.Datasets.Count) {
-            Add-Issue 'Tenant settings' '' "No tables were returned for any of the $silent semantic models. A Power BI admin needs to enable 'Enhance admin APIs responses with detailed metadata' and 'Enhance admin APIs responses with DAX and mashup expressions'."
-        }
-        $tableCount = @($model.Datasets.Values | ForEach-Object { @($_.Tables).Count } | Measure-Object -Sum).Sum
-        Complete-RunStep "done, $(Format-Count $tableCount 'table') (from the scan)"
-    }
-    else {
-        Start-RunStep 'Reading reports'
-        Read-UserReport $model $workspaceIds
-        Complete-RunStep "done, $(Format-Count $model.Reports.Count 'report')"
-
-        Start-RunStep 'Reading tables and data sources'
-        Read-UserDataset $model
-        $tableCount = @($model.Datasets.Values | ForEach-Object { @($_.Tables).Count } | Measure-Object -Sum).Sum
-        Complete-RunStep "done, $(Format-Count $model.Datasets.Count 'semantic model'), $(Format-Count $tableCount 'table')"
-    }
-
-    Start-RunStep 'Tracing lineage'
-    $rows = @(Get-LineageRow -Model $model)
-    if ($script:UnnamedGateways.Count -gt 0) {
-        Add-Issue 'Gateway' '' "Names not available for $(Format-Count $script:UnnamedGateways.Count 'gateway'); their IDs are listed. Names need admin rights on the gateway."
-    }
-    $traced = @($rows | Where-Object SourceObject).Count
-    Complete-RunStep "done, $(Format-Count $rows.Count 'row'), $('{0:N0}' -f $traced) traced to a source table"
-
-    Start-RunStep 'Saving results'
-    $document = New-LineageDocument $rows $model $effectiveMode
-    $jsonPath = Join-Path $runFolder 'report-lineage.json'
-    ConvertTo-Json -InputObject $document -Depth 20 | Set-Content -Path $jsonPath -Encoding utf8
-
-    # The All Lineage rows as CSV, untruncated, named after the workbook and saved next to it.
-    $csvPath = [System.IO.Path]::ChangeExtension($(if ($ExcelPath) { $ExcelPath } else { Join-Path $runFolder 'report-lineage.xlsx' }), '.csv')
-    $csvFolder = Split-Path -Parent ([System.IO.Path]::GetFullPath($csvPath))
-    if (-not (Test-Path -LiteralPath $csvFolder)) { $null = New-Item -ItemType Directory -Path $csvFolder -Force }
-    # UTF-8 with a byte order mark, so Excel opens names with accents correctly.
-    $csvEncoding = if ($PSVersionTable.PSVersion.Major -ge 6) { 'utf8BOM' } else { 'UTF8' }
-    $csvRows = if ($rows.Count -gt 0) { $rows } else { [pscustomobject]@{} }
-    $csvRows | Export-Csv -LiteralPath $csvPath -NoTypeInformation -Encoding $csvEncoding
-
-    if (-not $SkipExcel) {
-        Update-RunStep 'building the Excel workbook' -Force
-        if (-not $ExcelPath) { $ExcelPath = Join-Path $runFolder 'report-lineage.xlsx' }
-        $workbook = & (Join-Path $PSScriptRoot 'Export-PbiLineageWorkbook.ps1') -JsonPath $jsonPath -ExcelPath $ExcelPath -Force
-    }
-    Complete-RunStep $(if ($SkipExcel) { 'done, JSON and CSV' } else { 'done, JSON, CSV and Excel' })
-}
-catch {
-    Stop-RunStep
-    throw
-}
-
-$summary = $document.summary
-Write-RunMessage ''
-Write-RunMessage "Done in $(Get-RunElapsed)." -Color Green
-Write-RunMessage ('  {0} | {1} | {2}' -f (Format-Count $summary.reports 'report'), (Format-Count $summary.semanticModels 'semantic model'), (Format-Count $summary.tables 'table'))
-Write-RunMessage ('  {0}: {1:N0} traced to a source table, {2:N0} to a connection only, {3:N0} with no external source' -f (Format-Count $summary.lineageRows 'lineage row'), $summary.tracedToObject, $summary.connectionOnly, $summary.noExternalSource)
-if ($script:Issues.Count -gt 0) {
-    $where = if ($SkipExcel) { 'the "issues" section of the JSON' } else { 'the Issues sheet' }
-    $noun = if ($script:Issues.Count -eq 1) { 'issue needs' } else { 'issues need' }
-    Write-RunMessage ('  {0:N0} {1} attention; see {2}.' -f $script:Issues.Count, $noun, $where) -Color Yellow
-}
-if ($workbook) {
-    Write-RunMessage ''
-    Write-RunMessage '  Workbook sheets:'
-    $nameWidth = ($workbook.Sheets.Name | Measure-Object -Property Length -Maximum).Maximum + 3
-    foreach ($sheet in $workbook.Sheets) {
-        Write-RunMessage ('    {0}{1}' -f $sheet.Name.PadRight($nameWidth), $sheet.Description)
-    }
-    $workspaceSheetCount = @($workbook.WorkspaceSheets).Count
-    if ($workspaceSheetCount -gt 0) { Write-RunMessage "    + $(Format-Count $workspaceSheetCount 'workspace sheet')" }
-    Write-RunMessage ''
-}
-if (-not $SkipExcel) { Write-RunMessage "  Excel: $ExcelPath" }
-Write-RunMessage "  CSV:   $csvPath"
-Write-RunMessage "  JSON:  $jsonPath"
-Write-RunMessage ''
-
-if ($Interactive -and -not $SkipExcel) {
-    $open = Read-Host 'Open the workbook now? [Y/n]'
-    if ($open -notmatch '^\s*n') { Invoke-Item -LiteralPath $ExcelPath }
-}
-
-if ($PassThru) { $rows }
-'@ }
-    @{ Path = 'src\Export-PbiLineageWorkbook.ps1'; Text = @'
-#Requires -Version 5.1
-
-<#
-.SYNOPSIS
-    Builds the Excel lineage workbook from the JSON written by Get-PbiReportLineage.ps1.
-
-.DESCRIPTION
-    Sheets:
-
-      Summary         Run details, totals, and a list of workspaces linking to their sheets.
-      All Lineage     Every lineage row: report > semantic model > table > source object > gateway.
-      Source Objects  Each source object with the gateways, reports and model tables that depend on it.
-      Issues          Anything that could not be read during the run (a model, a workspace, gateway names).
-
-    Returns an object with the workbook path, the standard sheets and their descriptions, and the workspace sheet names.
-      <workspace>     One sheet per workspace, holding the lineage rows of the reports in that workspace.
-
-    Excel holds at most 32,767 characters per cell. Longer values (typically M expressions or native SQL) are
-    cut in the workbook and marked; the JSON keeps the full text, so rebuilding from it never loses data.
-
-    Values are written as text, so an M expression starting with '=' does not become a formula and an ID such
-    as 0012 keeps its leading zeros.
-
-.PARAMETER JsonPath
-    report-lineage.json from a Get-PbiReportLineage.ps1 run.
-
-.PARAMETER ExcelPath
-    Path of the .xlsx to create.
-
-.PARAMETER Force
-    Replace the workbook if it already exists.
-
-.EXAMPLE
-    ./Export-PbiLineageWorkbook.ps1 -JsonPath ../output/report-lineage-20260916-090000/report-lineage.json `
-        -ExcelPath 'C:\Reports\PowerBI-Lineage.xlsx' -Force
-#>
-[CmdletBinding()]
-param(
-    [Parameter(Mandatory)]
-    [string] $JsonPath,
-
-    [Parameter(Mandatory)]
-    [string] $ExcelPath,
-
-    [switch] $Force
-)
-
-$ErrorActionPreference = 'Stop'
-Import-Module ([System.IO.Path]::GetFullPath([System.IO.Path]::Combine($PSScriptRoot, 'modules', 'Prerequisites.psm1'))) -Force
-Initialize-RequiredModule -Name ImportExcel -InformationAction Continue
-Add-Type -AssemblyName System.Drawing
-
-# The standard sheets, in workbook order. Workspace sheets follow them and need no description.
-$script:SheetCatalog = @(
-    [pscustomobject]@{ Name = 'Summary'; Description = 'Run details, totals and links to every sheet' }
-    [pscustomobject]@{ Name = 'All Lineage'; Description = 'Every report, semantic model, table and the source it reads from' }
-    [pscustomobject]@{ Name = 'Source Objects'; Description = 'Each database object and the reports that depend on it' }
-    [pscustomobject]@{ Name = 'Issues'; Description = 'Anything that could not be read during the run' }
-)
-
-$script:MaxCellLength = 32767
-$script:TruncationMarker = ' ...[truncated in Excel; full text in the JSON]'
-$script:TruncatedCells = 0
-
-$script:ColumnTypes = @{
-    TableIsHidden = [bool]
-    ReportCount   = [int]
-    ModelCount    = [int]
-}
-
-$script:ColumnWidths = @{
-    WorkspaceName = 24; ReportName = 30; DatasetName = 28; DatasetWorkspaceName = 24; TableName = 26
-    SourceType = 22; Connector = 20; Server = 34; Database = 24; Schema = 14; SourceObject = 30; Location = 40
-    GatewayName = 24; GatewayDatasourceName = 24; ConnectionDetails = 40; IsSnowflakeConnection = 22; NativeQuery = 50; Notes = 60
-    SourceExpression = 60; Reports = 60; ModelTables = 60; Gateways = 24; Area = 18; Item = 36; Message = 100
-}
-
-# Used when a run produced no rows, so the sheets still show their headers.
-$script:DefaultLineageColumns = @(
-    'WorkspaceName', 'WorkspaceId', 'ReportName', 'ReportId', 'ReportType', 'DatasetName', 'DatasetId',
-    'DatasetWorkspaceName', 'DatasetWorkspaceId', 'DatasetStorageMode', 'TableName', 'TableIsHidden',
-    'TableStorageMode', 'SourceType', 'Connector', 'Server', 'Database', 'Schema', 'SourceObject',
-    'SourceObjectKind', 'ObjectOrigin', 'Location', 'ConnectorOptions', 'NativeQuery', 'DatasourceType',
-    'GatewayId', 'GatewayName', 'GatewayDatasourceId', 'GatewayDatasourceName', 'ConnectionDetails', 'IsSnowflakeConnection', 'Notes',
-    'SourceExpression')
-$script:DefaultSourceObjectColumns = @(
-    'SourceType', 'Server', 'Database', 'Schema', 'SourceObject', 'Location', 'Gateways', 'ReportCount',
-    'ModelCount', 'Reports', 'ModelTables')
-$script:DefaultIssueColumns = @('Area', 'Item', 'Message')
-
-function ConvertTo-CellText {
-    param($Value)
-    # ConvertFrom-Json turns ISO date strings into DateTime; write them back as the text they were.
-    $text = if ($Value -is [string]) { $Value }
-    elseif ($Value -is [datetime]) { $Value.ToString('yyyy-MM-ddTHH:mm:ss.FFFFFFFK') }
-    elseif ($Value -is [ValueType]) { [string]$Value }
-    else { ConvertTo-Json -InputObject $Value -Compress -Depth 10 }
-    if ($text.Length -gt $script:MaxCellLength) {
-        $script:TruncatedCells++
-        $text = $text.Substring(0, $script:MaxCellLength - $script:TruncationMarker.Length) + $script:TruncationMarker
-    }
-    $text
-}
-
-function ConvertTo-DataTable {
-    param([object[]] $Rows, [string[]] $DefaultColumns, [string] $TableName)
-    $columns = if ($Rows.Count -gt 0) { @($Rows[0].PSObject.Properties.Name) } else { $DefaultColumns }
-
-    $table = [System.Data.DataTable]::new($TableName)
-    foreach ($column in $columns) {
-        $type = if ($script:ColumnTypes.ContainsKey($column)) { $script:ColumnTypes[$column] } else { [string] }
-        [void]$table.Columns.Add($column, $type)
-    }
-
-    $table.BeginLoadData()
-    foreach ($row in $Rows) {
-        $dataRow = $table.NewRow()
-        foreach ($column in $columns) {
-            $value = $row.$column
-            if ($null -eq $value) { continue }
-            if ($table.Columns[$column].DataType -eq [string]) { $dataRow[$column] = ConvertTo-CellText $value }
-            elseif (-not ($value -is [string] -and $value.Length -eq 0)) { $dataRow[$column] = $value }
-        }
-        $table.Rows.Add($dataRow)
-    }
-    $table.EndLoadData()
-    , $table
-}
-
-function Get-SheetName {
-    # Excel sheet names: at most 31 characters, none of []:*?/\, not wrapped in quotes, unique ignoring case.
-    param([string] $Name, [System.Collections.Generic.HashSet[string]] $Used)
-    $clean = ($Name -replace '[\[\]:*?/\\]', '-').Trim().Trim("'").Trim()
-    if (-not $clean) { $clean = 'Workspace' }
-    if ($clean.Length -gt 31) { $clean = $clean.Substring(0, 31).TrimEnd() }
-
-    $candidate = $clean
-    for ($n = 2; $Used.Contains($candidate) -or $candidate -eq 'History'; $n++) {
-        $suffix = " ($n)"
-        $candidate = $clean.Substring(0, [math]::Min($clean.Length, 31 - $suffix.Length)).TrimEnd() + $suffix
-    }
-    [void]$Used.Add($candidate)
-    $candidate
-}
-
-function Add-DataSheet {
-    param($Package, [string] $SheetName, [System.Data.DataTable] $Table)
-    $sheet = $Package.Workbook.Worksheets.Add($SheetName)
-    if ($Table.Rows.Count -gt 0) {
-        [void]$sheet.Cells['A1'].LoadFromDataTable($Table, $true, [OfficeOpenXml.Table.TableStyles]::Medium2)
-    }
-    else {
-        [void]$sheet.Cells['A1'].LoadFromDataTable($Table, $true)
-        $sheet.Row(1).Style.Font.Bold = $true
-    }
-    for ($i = 0; $i -lt $Table.Columns.Count; $i++) {
-        $name = $Table.Columns[$i].ColumnName
-        $width = if ($script:ColumnWidths.ContainsKey($name)) { $script:ColumnWidths[$name] } elseif ($name -like '*Id') { 38 } else { 18 }
-        $sheet.Column($i + 1).Width = $width
-    }
-    $sheet.View.FreezePanes(2, 1)
-    $sheet
-}
-
-function Set-SheetLink {
-    param($Cell, [string] $SheetName)
-    $Cell.Hyperlink = [OfficeOpenXml.ExcelHyperLink]::new("'$($SheetName.Replace("'", "''"))'!A1", $SheetName)
-    $Cell.Value = $SheetName
-    $Cell.Style.Font.UnderLine = $true
-    $Cell.Style.Font.Color.SetColor([System.Drawing.Color]::FromArgb(5, 99, 193))
-}
-
-function Add-SummarySheet {
-    param($Package, $Document, [object[]] $WorkspaceSheets)
-    $sheet = $Package.Workbook.Worksheets.Add('Summary')
-    $sheet.Cells['A1'].Value = 'Power BI report lineage'
-    $sheet.Cells['A1'].Style.Font.Bold = $true
-    $sheet.Cells['A1'].Style.Font.Size = 14
-
-    $scope = if ($Document.workspaceScope -is [string]) { $Document.workspaceScope } else { @($Document.workspaceScope) -join ', ' }
-    $details = [ordered]@{
-        'Generated (UTC)'                = ConvertTo-CellText $Document.generatedAtUtc
-        'Collection mode'                = $Document.collectionMode
-        'Signed in as'                   = $Document.signedInAs
-        'Workspace scope'                = $scope
-        'Workspaces with reports'        = $Document.summary.workspaces
-        'Reports'                        = $Document.summary.reports
-        'Semantic models'                = $Document.summary.semanticModels
-        'Lineage rows'                   = $Document.summary.lineageRows
-        'Traced to a source object'      = $Document.summary.tracedToObject
-        'Traced to a connection only'    = $Document.summary.connectionOnly
-        'No external source'             = $Document.summary.noExternalSource
-        'Issues'                         = @($Document.issues | Where-Object { $_ }).Count
-        'Source JSON'                    = (Resolve-Path $JsonPath).Path
-    }
-    $r = 3
-    foreach ($entry in $details.GetEnumerator()) {
-        $sheet.Cells[$r, 1].Value = $entry.Key
-        $sheet.Cells[$r, 1].Style.Font.Bold = $true
-        $sheet.Cells[$r, 2].Value = $entry.Value
-        $r++
-    }
-    if ($script:TruncatedCells -gt 0) {
-        $sheet.Cells[$r, 1].Value = 'Truncated cells'
-        $sheet.Cells[$r, 1].Style.Font.Bold = $true
-        $sheet.Cells[$r, 2].Value = "$($script:TruncatedCells) value(s) exceeded Excel's 32,767-character cell limit and are cut here; the JSON has the full text."
-        $r++
-    }
-
-    $r++
-    $sheet.Cells[$r, 1].Value = 'Sheet'
-    $sheet.Cells[$r, 2].Value = 'Contents'
-    $sheet.Row($r).Style.Font.Bold = $true
-    foreach ($entry in $script:SheetCatalog) {
-        $r++
-        Set-SheetLink $sheet.Cells[$r, 1] $entry.Name
-        $sheet.Cells[$r, 2].Value = $entry.Description
-    }
-
-    $r += 2
-    $headers = 'Workspace', 'Sheet', 'Reports', 'Semantic models', 'Lineage rows', 'Traced to a source object'
-    for ($c = 1; $c -le $headers.Count; $c++) { $sheet.Cells[$r, $c].Value = $headers[$c - 1] }
-    $sheet.Row($r).Style.Font.Bold = $true
-    foreach ($workspace in $WorkspaceSheets) {
-        $r++
-        $sheet.Cells[$r, 1].Value = $workspace.Name
-        Set-SheetLink $sheet.Cells[$r, 2] $workspace.Sheet
-        $sheet.Cells[$r, 3].Value = $workspace.Reports
-        $sheet.Cells[$r, 4].Value = $workspace.Models
-        $sheet.Cells[$r, 5].Value = $workspace.Rows
-        $sheet.Cells[$r, 6].Value = $workspace.Traced
-    }
-    $sheet.Column(1).Width = 30
-    $sheet.Column(2).Width = 34
-    foreach ($c in 3..6) { $sheet.Column($c).Width = 18 }
-}
-
-if (-not (Test-Path -LiteralPath $JsonPath)) { throw "JSON file not found: $JsonPath" }
-if (Test-Path -LiteralPath $ExcelPath) {
-    if (-not $Force) { throw "$ExcelPath already exists. Use -Force to replace it." }
-    Remove-Item -LiteralPath $ExcelPath -Force
-}
-$directory = Split-Path -Parent ([System.IO.Path]::GetFullPath($ExcelPath))
-if (-not (Test-Path -LiteralPath $directory)) { $null = New-Item -ItemType Directory -Path $directory -Force }
-
-$json = Get-Content -Raw -LiteralPath $JsonPath -Encoding UTF8
-$document = if ($PSVersionTable.PSVersion.Major -ge 7) { $json | ConvertFrom-Json -Depth 100 } else { $json | ConvertFrom-Json }
-if ($document.schemaVersion -ne 1) { throw "Unsupported lineage JSON schemaVersion '$($document.schemaVersion)'." }
-
-$lineage = @($document.lineage | Where-Object { $_ })
-$allTable = ConvertTo-DataTable $lineage $script:DefaultLineageColumns 'AllLineage'
-$sourceTable = ConvertTo-DataTable @($document.sourceObjects | Where-Object { $_ }) $script:DefaultSourceObjectColumns 'SourceObjects'
-$issueTable = ConvertTo-DataTable @($document.issues | Where-Object { $_ }) $script:DefaultIssueColumns 'Issues'
-
-$usedNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-foreach ($reserved in $script:SheetCatalog.Name) { [void]$usedNames.Add($reserved) }
-
-$workspaceSheets = @($lineage | Group-Object WorkspaceId | ForEach-Object {
-        $rows = $_.Group
-        $name = ($rows | Where-Object WorkspaceName | Select-Object -First 1).WorkspaceName
-        if (-not $name) { $name = $_.Name }
-        [pscustomobject]@{
-            Id      = $_.Name
-            Name    = $name
-            Reports = @($rows.ReportId | Sort-Object -Unique).Count
-            Models  = @($rows.DatasetId | Where-Object { $_ } | Sort-Object -Unique).Count
-            Rows    = $rows.Count
-            Traced  = @($rows | Where-Object SourceObject).Count
-            Sheet   = $null
-        }
-    } | Sort-Object Name, Id)
-foreach ($workspace in $workspaceSheets) { $workspace.Sheet = Get-SheetName $workspace.Name $usedNames }
-
-$package = Open-ExcelPackage -Path $ExcelPath -Create
-try {
-    Add-SummarySheet $package $document $workspaceSheets
-    $null = Add-DataSheet $package 'All Lineage' $allTable
-    $null = Add-DataSheet $package 'Source Objects' $sourceTable
-    $null = Add-DataSheet $package 'Issues' $issueTable
-
-    $view = [System.Data.DataView]::new($allTable)
-    $index = 0
-    foreach ($workspace in $workspaceSheets) {
-        $index++
-        Write-Progress -Activity 'Building workspace sheets' -Status $workspace.Name -PercentComplete ([int](100 * $index / $workspaceSheets.Count))
-        $view.RowFilter = "WorkspaceId = '$($workspace.Id.Replace("'", "''"))'"
-        $null = Add-DataSheet $package $workspace.Sheet $view.ToTable("Workspace$index")
-    }
-    Write-Progress -Activity 'Building workspace sheets' -Completed
-}
-catch {
-    Close-ExcelPackage $package -NoSave
-    throw
-}
-Close-ExcelPackage $package
-
-Write-Verbose "Workbook written: $ExcelPath ($($workspaceSheets.Count) workspace sheet(s), $($script:TruncatedCells) truncated cell(s))."
-
-# Describe what was built, so callers can report it.
-[pscustomobject]@{
-    Path            = (Resolve-Path -LiteralPath $ExcelPath).Path
-    Sheets          = $script:SheetCatalog
-    WorkspaceSheets = @($workspaceSheets.Sheet)
-    TruncatedCells  = $script:TruncatedCells
-}
-'@ }
-    @{ Path = 'Invoke-LineageRun.ps1'; Text = @'
-#Requires -Version 5.1
-<#
-.SYNOPSIS
-    Runs Get-PbiReportLineage.ps1 unattended with settings taken from LINEAGE_* environment variables.
-
-.DESCRIPTION
-    Used by PowerBI-Lineage.Orchestrator.ps1. Reading the settings from environment variables means no value typed into
-    the runbook is ever placed on a command line. On failure it writes "ERROR: <message>" to standard error and exits 1.
-#>
-
-$ErrorActionPreference = 'Stop'
-try {
-    $parameters = @{
-        Unattended = $true
-        Mode       = $env:LINEAGE_MODE
-        TenantId   = $env:LINEAGE_TENANT_ID
-        ClientId   = $env:LINEAGE_CLIENT_ID
-        ExcelPath  = $env:LINEAGE_EXCEL_PATH
-    }
-    if ($env:LINEAGE_CERTIFICATE_THUMBPRINT) { $parameters.CertificateThumbprint = $env:LINEAGE_CERTIFICATE_THUMBPRINT }
-    if ($env:LINEAGE_WORKSPACE_IDS) { $parameters.WorkspaceId = @($env:LINEAGE_WORKSPACE_IDS -split ',') }
-
-    & (Join-Path $PSScriptRoot 'src\Get-PbiReportLineage.ps1') @parameters
-    exit 0
-}
-catch {
-    [Console]::Error.WriteLine("ERROR: $($_.Exception.Message)")
-    exit 1
+if (-not $finished) { throw "Power BI lineage run did not finish within $timeout minutes and was stopped. Log: $logPath" }
+if ($process.ExitCode -ne 0) {
+    $reason = (($errorText -replace '\s+', ' ').Trim()) -replace '^ERROR:\s*', ''
+    if (-not $reason) { $reason = (@($output -split '\r?\n' | Where-Object { $_ -match '\S' }) | Select-Object -Last 5) -join ' ' }
+    throw "Power BI lineage run failed: $reason Log: $logPath"
 }
-'@ }
-    )
 
-    # ---- Unpack once per version ------------------------------------------------------------------------------------
-
-    $sha = [Security.Cryptography.SHA256]::Create()
-    $fingerprint = ($payload | ForEach-Object { $_.Path + "`n" + $_.Text }) -join "`n"
-    $version = -join (@($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($fingerprint)))[0..5] | ForEach-Object { $_.ToString('x2') })
-
-    $installRoot = Join-Path $env:ProgramData 'PowerBI-Lineage'
-    try { $null = New-Item -ItemType Directory -Path $installRoot -Force }
-    catch { $installRoot = Join-Path ([IO.Path]::GetTempPath()) 'PowerBI-Lineage' }
-    $target = Join-Path $installRoot $version
-
-    if (-not (Test-Path -LiteralPath (Join-Path $target '.complete'))) {
-        foreach ($file in $payload) {
-            $path = Join-Path $target $file.Path
-            $null = New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force
-            $text = [regex]::Replace($file.Text, '(?m)^' + [regex]::Escape($escapeMarker), '')
-            [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $true))
-        }
-        Set-Content -LiteralPath (Join-Path $target '.complete') -Value $version
-        # Remove older versions only: their folder names are 12 hex characters.
-        Get-ChildItem -LiteralPath $installRoot | Where-Object { $_.PSIsContainer -and $_.Name -match '^[0-9a-f]{12}$' -and $_.Name -ne $version } |
-            Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    # ---- Run in 64-bit Windows PowerShell --------------------------------------------------------------------------
-    # Sysnative reaches the 64-bit system folder from a 32-bit process; from a 64-bit process it does not exist.
-    # Settings are passed as environment variables, so no value is ever part of a command line.
-
-    $system = Join-Path $env:SystemRoot 'Sysnative'
-    if (-not (Test-Path -LiteralPath $system)) { $system = Join-Path $env:SystemRoot 'System32' }
-    # This path is resolved by the 64-bit cmd.exe started below, for which Sysnative does not exist: use System32.
-    $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $runner = Join-Path $target 'Invoke-LineageRun.ps1'
-
-    $runId = [guid]::NewGuid().ToString('N')
-    $stdoutFile = Join-Path ([IO.Path]::GetTempPath()) "PowerBI-Lineage-$runId.out.txt"
-    $stderrFile = Join-Path ([IO.Path]::GetTempPath()) "PowerBI-Lineage-$runId.err.txt"
-
-    $startInfo = New-Object System.Diagnostics.ProcessStartInfo
-    $startInfo.FileName = Join-Path $system 'cmd.exe'
-    $startInfo.Arguments = '/d /c ""' + $powershell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $runner +
-        '" > "' + $stdoutFile + '" 2> "' + $stderrFile + '" < NUL"'
-    $startInfo.WorkingDirectory = $target
-    $startInfo.UseShellExecute = $false
-    $startInfo.CreateNoWindow = $true
-    $settings = @{
-        LINEAGE_TENANT_ID              = $TenantId
-        LINEAGE_CLIENT_ID              = $AppId
-        LINEAGE_EXCEL_PATH             = $ExcelPath
-        LINEAGE_MODE                   = $Mode
-        LINEAGE_WORKSPACE_IDS          = $WorkspaceIds
-        LINEAGE_CERTIFICATE_THUMBPRINT = $CertificateThumbprint
-        PBI_CLIENT_SECRET              = $ClientSecret
-    }
-    foreach ($name in $settings.Keys) {
-        if ($settings[$name]) { $startInfo.EnvironmentVariables[$name] = $settings[$name] }
-        elseif ($startInfo.EnvironmentVariables.ContainsKey($name)) { $startInfo.EnvironmentVariables.Remove($name) }
-    }
-    if (-not $startInfo.EnvironmentVariables['LOCALAPPDATA']) {
-        $startInfo.EnvironmentVariables['LOCALAPPDATA'] = Join-Path $installRoot 'LocalAppData'
-    }
-
-    $process = [System.Diagnostics.Process]::Start($startInfo)
-    $finished = $process.WaitForExit($timeout * 60 * 1000)
-    if (-not $finished) { & taskkill.exe /PID $process.Id /T /F | Out-Null }
-
-    $output = ''
-    $errorText = ''
-    if (Test-Path -LiteralPath $stdoutFile) { $output = [IO.File]::ReadAllText($stdoutFile); Remove-Item -LiteralPath $stdoutFile -Force }
-    if (Test-Path -LiteralPath $stderrFile) { $errorText = [IO.File]::ReadAllText($stderrFile); Remove-Item -LiteralPath $stderrFile -Force }
-
-    # Orchestrator does not keep the activity's console output, so the run log is saved next to the workbook.
-    $logPath = [IO.Path]::ChangeExtension($ExcelPath, '.log')
-    try {
-        $logFolder = Split-Path -Parent $logPath
-        if ($logFolder -and -not (Test-Path -LiteralPath $logFolder)) { $null = New-Item -ItemType Directory -Path $logFolder -Force }
-        [IO.File]::WriteAllText($logPath, ($output + $errorText))
-    }
-    catch { $logPath = "(log not written: $($_.Exception.Message))" }
-
-    if (-not $finished) {
-        Stop-Run "The run did not finish within $timeout minutes and was stopped. Log: $logPath"
-    }
-    if ($process.ExitCode -ne 0) {
-        $reason = (@($errorText -split "`r?`n" | Where-Object { $_ -match '\S' }) -join ' ') -replace '^ERROR:\s*', ''
-        if (-not $reason) { $reason = (@($output -split "`r?`n" | Where-Object { $_ -match '\S' }) | Select-Object -Last 5) -join ' ' }
-        Stop-Run "$reason Log: $logPath"
-    }
-
-    # Success: the run summary.
-    $output
-    exit 0
-}
-catch {
-    Stop-Run $_.Exception.Message
-}
+# Success: the run summary.
+$output

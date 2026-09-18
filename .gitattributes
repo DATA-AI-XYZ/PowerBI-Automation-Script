@@ -4,4 +4,3 @@
 *.bat -text
 *.ois_export -text
 *.Orchestrator.ps1 -text
-*.RunbookActivity.ps1 -text

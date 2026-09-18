@@ -27,7 +27,7 @@ Each file is self-contained: download just the one you need.
 | Run it on my computer | [`PowerBI-Lineage.cmd`](PowerBI-Lineage.cmd) | [1. Run it on your desktop](#1-run-it-on-your-desktop) |
 | Send it to someone by email | [`PowerBI-Lineage.zip`](PowerBI-Lineage.zip) (the same `.cmd`, zipped) | [1. Run it on your desktop](#1-run-it-on-your-desktop) |
 | Run it on a schedule, e.g. Task Scheduler, SQL Server Agent, UiPath or Control-M | [`PowerBI-Lineage.cmd`](PowerBI-Lineage.cmd) | [2. Run it unattended](#2-run-it-unattended) |
-| Run it in a System Center Orchestrator runbook | [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1) **and** [`PowerBI-Lineage.RunbookActivity.ps1`](PowerBI-Lineage.RunbookActivity.ps1) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
+| Run it in a System Center Orchestrator runbook | [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1) (paste into one activity) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
 
 To download a file on GitHub, open it and choose **Download raw file**.
 
@@ -128,31 +128,22 @@ On the machine that runs the job:
 
 ## 3. Run it in System Center Orchestrator
 
-Orchestrator uses two files:
+Use [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1): **one file, pasted into one activity**.
+Nothing is copied to the runbook server. The whole tool is inside the file as compressed text (the long block of
+letters and digits at the bottom); it unpacks itself on the first run.
 
-| File | What it is | Where it goes |
-|---|---|---|
-| [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1) | The whole tool in one file (about 135 KB). | **Copied** onto the runbook server. Do **not** paste it into an activity: it is too large for the Run .NET Script activity, which fails with "Error initializing extension". |
-| [`PowerBI-Lineage.RunbookActivity.ps1`](PowerBI-Lineage.RunbookActivity.ps1) | A short script (about 90 lines) holding the settings. It starts the tool file in 64-bit Windows PowerShell. | **Pasted** into a Run .NET Script activity. |
-
-### Step 1: copy the tool to the runbook server
-
-Copy `PowerBI-Lineage.Orchestrator.ps1` to a folder on **every runbook server** that may run the runbook, for
-example `C:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.ps1`. The path must not contain `%`, `&`, `^` or quotes.
-
-If you downloaded it from GitHub, unblock it: right-click the file, choose **Properties**, and tick **Unblock**.
-
-### Step 2: add it to a runbook
+### Add it to a runbook
 
 1. In **Runbook Designer**, create a runbook inside a folder.
-2. Add a **Run .NET Script** activity (in **System**).
-3. On its **Details** tab, set the language to **PowerShell**.
-4. Open `PowerBI-Lineage.RunbookActivity.ps1`, copy all of it, and paste it into the **Script** box.
-5. Fill in the settings at the top of the script. Required settings start with placeholder text such as
-   `'Required-TenantId'`: replace each placeholder with your value. Optional settings start empty.
+2. Drag a **new Run .NET Script** activity from **Activities > System** onto the runbook. Use a new activity rather
+   than one from an imported runbook or a copy of another activity.
+3. On its **Details** tab, set **Type** to **PowerShell**.
+4. Open `PowerBI-Lineage.Orchestrator.ps1` in Notepad, select all (**Ctrl+A**), copy, and paste it into the
+   **Script** box, replacing anything already there.
+5. Fill in the settings at the top. Required settings start with placeholder text such as `'Required-TenantId'`:
+   replace each placeholder with your value. Optional settings start empty.
 
    ```powershell
-   $ScriptPath = 'C:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.ps1'  # where you copied the tool in step 1
    $TenantId = 'contoso.onmicrosoft.com'                # tenant ID or domain
    $AppId = '00000000-0000-0000-0000-000000000000'      # the service principal's application (client) ID
    $ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'  # see "Keep the client secret safe" below
@@ -164,9 +155,11 @@ If you downloaded it from GitHub, unblock it: right-click the file, choose **Pro
    ```
 
    Values go between the single quotes and must not contain a single quote. Instead of typing a value you can
-   subscribe to one: delete the text between the quotes, right-click there, and choose **Subscribe > Published Data**
+   subscribe to one: select the text between the quotes, right-click, and choose **Subscribe > Published Data**
    (for example an Initialize Data parameter).
 6. Select **Finish**, check the runbook in, and run it.
+
+To update the tool later, paste the new file over the whole script and fill in the settings again.
 
 The activity **succeeds** when the run succeeds. In the `$ExcelPath` folder you then find the workbook, a run log
 and CSV named after it (for example `PowerBI-Lineage_1709261545.xlsx`, `.log` and `.csv`), and a
@@ -191,30 +184,30 @@ The secret is passed to the tool through an environment variable, never on a com
 
 ### Runbook server requirements
 
-- **Modules:** if the server cannot reach powershellgallery.com, install them first in an elevated PowerShell:
+- **Modules:** `MicrosoftPowerBIMgmt.Profile` (part of `MicrosoftPowerBIMgmt`) and `ImportExcel`. Modules already
+  installed for 32-bit or 64-bit Windows PowerShell are used as they are; only a missing one is installed. If the
+  server cannot reach powershellgallery.com, install them first in an elevated PowerShell:
   `Install-Module MicrosoftPowerBIMgmt.Profile, ImportExcel -Scope AllUsers`.
-- **Access:** the **Orchestrator Runbook Service** account needs read access to `$ScriptPath` and write access to the
-  `$ExcelPath` folder.
+- **Access:** the **Orchestrator Runbook Service** account needs write access to the `$ExcelPath` folder.
 - **Disk:** the tool unpacks itself to `%ProgramData%\PowerBI-Lineage` on first run. Windows lets every account
   create folders under `%ProgramData%` by default.
 
-To test the tool outside Orchestrator, fill in the same settings at the top of `PowerBI-Lineage.Orchestrator.ps1`
-(a copy, so the secret isn't left on disk) and run it with Windows PowerShell.
+To test outside Orchestrator, fill in the settings in a copy of `PowerBI-Lineage.Orchestrator.ps1` and run it with
+Windows PowerShell; delete the copy afterwards so the secret isn't left on disk.
 
 ### Alternative: import a ready-made runbook
 
-[`PowerBI-Lineage.ois_export`](PowerBI-Lineage.ois_export) contains the activity script in a runbook, with each
-setting subscribed to an **Initialize Data** parameter (Script path, Tenant ID, App ID, Client secret, Excel path, and
-the optional ones). You still need step 1.
+[`PowerBI-Lineage.ois_export`](PowerBI-Lineage.ois_export) contains the same script in a runbook, with each setting
+subscribed to an **Initialize Data** parameter (Tenant ID, App ID, Client secret, Excel path, and the optional ones):
 
 1. In Runbook Designer, right-click a folder and choose **Import**, then select the file.
 2. Clear **Import Orchestrator encrypted data** (the file contains none).
 3. Open the **Power BI** folder and run **Power BI Report Lineage**.
 
 This file was generated to match the Runbook Designer export format but has not been import-tested on an
-Orchestrator server. If it fails to import or an activity shows as unknown, use
-[Step 2: add it to a runbook](#step-2-add-it-to-a-runbook). A client secret entered as an Initialize Data parameter
-also appears in the job's run history, so subscribe an encrypted variable instead for production.
+Orchestrator server. If it fails to import, or its activity fails with "Error initializing extension", delete the
+imported runbook and use [Add it to a runbook](#add-it-to-a-runbook) instead. A client secret entered as an Initialize
+Data parameter also appears in the job's run history, so subscribe an encrypted variable instead for production.
 
 ---
 
@@ -283,8 +276,7 @@ sheet.
 | "This service principal cannot use the Power BI admin APIs" | See [Service principal for the whole tenant](#before-you-start-power-bi-permissions), or use User mode. |
 | Rows noting "No table metadata returned" | A Power BI admin needs to enable the two **Enhance admin APIs responses** tenant settings. |
 | "Unattended runs sign in as a service principal" | Pass `-TenantId` and `-ClientId` with `-CertificateThumbprint`, or set `PBI_CLIENT_SECRET`. |
-| "Error initializing extension" in Orchestrator | The large `PowerBI-Lineage.Orchestrator.ps1` was pasted into the activity. Copy it to the runbook server instead, and paste `PowerBI-Lineage.RunbookActivity.ps1` into the activity ([section 3](#3-run-it-in-system-center-orchestrator)). |
-| "PowerBI-Lineage.Orchestrator.ps1 was not found at ..." | Copy the tool file to that path on the runbook server named in the message, or correct `$ScriptPath`. |
+| "Error initializing extension" in Orchestrator | Orchestrator could not start the activity, before any of the script ran. Drag a **new** Run .NET Script activity from **Activities > System** (not one from an imported runbook or a copied activity), set **Type** to **PowerShell**, and paste the whole of `PowerBI-Lineage.Orchestrator.ps1` ([section 3](#3-run-it-in-system-center-orchestrator)). |
 | "The setting ... is required" or "has an invalid value" | Orchestrator: check the settings at the top of the activity script, and replace every `Required-...` placeholder. `$AppId` must be a GUID and `$ExcelPath` must be a folder or end in `.xlsx`. |
 | The window closes at once, or scripts are blocked | Group Policy or AppLocker blocks PowerShell scripts. Ask IT. |
 
