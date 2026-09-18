@@ -113,6 +113,8 @@ PowerBI-Lineage.cmd -Mode Admin -TenantId contoso.onmicrosoft.com -ClientId <app
   `PowerBI-Lineage_DDMMYYHHMM.xlsx` (a run at 15:45 on 17 September 2026 writes `PowerBI-Lineage_1709261545.xlsx`).
   Earlier runs are kept.
 - **A `.xlsx` file**, e.g. `"\\fileserver\bi\PowerBI-Lineage.xlsx"`: the same file is replaced on every run.
+- **A `.csv` file**, e.g. `"\\fileserver\bi\PowerBI-Lineage.csv"`: **CSV only**, no workbook, replaced on every run.
+  The `ImportExcel` module is not needed.
 
 The CSV is named after the workbook, and the JSON is saved in a `report-lineage-<date>` folder next to it. `PowerBI-Lineage.cmd /?` lists every
 option, including
@@ -147,7 +149,8 @@ letters and digits at the bottom); it unpacks itself on the first run.
    $TenantId = 'contoso.onmicrosoft.com'                # tenant ID or domain
    $AppId = '00000000-0000-0000-0000-000000000000'      # the service principal's application (client) ID
    $ClientSecret = 'Required-ClientSecret-or-CertificateThumbprint'  # see "Keep the client secret safe" below
-   $ExcelPath = '\\fileserver\bi'                        # folder: PowerBI-Lineage_DDMMYYHHMM.xlsx each run; or a .xlsx file
+   $ExcelPath = '\\fileserver\bi'                        # folder: PowerBI-Lineage_DDMMYYHHMM.xlsx each run; or a .xlsx/.csv file
+   $OutputFormat = ''                                    # optional: Excel (default: workbook + CSV) or CSV (CSV only)
    $Mode = ''                                            # optional: Admin (default, whole tenant) or User
    $WorkspaceIds = ''                                    # optional: comma-separated workspace IDs
    $CertificateThumbprint = ''                           # optional: use a certificate instead of a secret
@@ -167,6 +170,9 @@ and CSV named after it (for example `PowerBI-Lineage_1709261545.xlsx`, `.log` an
 gets a new dated workbook each run, and a `.xlsx` file is replaced each run.
 The activity **fails**, with the reason in its error summary, when the run fails; the full detail is in the run log.
 
+**CSV only:** set `$OutputFormat = 'CSV'` (or give `$ExcelPath` a `.csv` file). Each run then writes
+`PowerBI-Lineage_DDMMYYHHMM.csv` and its `.log`, with no workbook, and the server doesn't need the `ImportExcel` module.
+
 ### Keep the client secret safe
 
 A secret typed into the script is stored in the Orchestrator database in plain text. Instead:
@@ -184,7 +190,7 @@ The secret is passed to the tool through an environment variable, never on a com
 
 ### Runbook server requirements
 
-- **Modules:** `MicrosoftPowerBIMgmt.Profile` (part of `MicrosoftPowerBIMgmt`) and `ImportExcel`. Modules already
+- **Modules:** `MicrosoftPowerBIMgmt.Profile` (part of `MicrosoftPowerBIMgmt`) and `ImportExcel` (not needed for CSV only). Modules already
   installed for 32-bit or 64-bit Windows PowerShell are used as they are; only a missing one is installed. If the
   server cannot reach powershellgallery.com, install them first in an elevated PowerShell:
   `Install-Module MicrosoftPowerBIMgmt.Profile, ImportExcel -Scope AllUsers`.
@@ -198,7 +204,8 @@ Windows PowerShell; delete the copy afterwards so the secret isn't left on disk.
 ### Alternative: import a ready-made runbook
 
 [`PowerBI-Lineage.ois_export`](PowerBI-Lineage.ois_export) contains the same script in a runbook, with each setting
-subscribed to an **Initialize Data** parameter (Tenant ID, App ID, Client secret, Excel path, and the optional ones):
+subscribed to an **Initialize Data** parameter (Tenant ID, App ID, Client secret, Excel path, Output format, and the
+other optional ones):
 
 1. In Runbook Designer, right-click a folder and choose **Import**, then select the file.
 2. Clear **Import Orchestrator encrypted data** (the file contains none).
@@ -217,7 +224,7 @@ Data parameter also appears in the job's run history, so subscribe an encrypted 
 |---|---|
 | `*.xlsx` | The workbook (sheets below). |
 | `report-lineage.json` | Everything collected, untruncated, in a `report-lineage-<date>` folder next to the workbook. |
-| `*.csv` | The All Lineage rows as CSV, named after the workbook and saved next to it. Nothing is cut short, and it opens directly in Excel. |
+| `*.csv` | The All Lineage rows as CSV, named after the workbook and saved next to it. Nothing is cut short, and it opens directly in Excel. For the CSV alone, give a `.csv` path (or `$OutputFormat = 'CSV'` in Orchestrator). |
 | `*.log` | Orchestrator runs only: the run's output, named after the workbook. |
 
 | Sheet | Contents |

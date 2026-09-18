@@ -1369,7 +1369,7 @@ Parameters:
   -TenantId, -ClientId           Service principal. Secret from PBI_CLIENT_SECRET, or use:
   -CertificateThumbprint         Certificate in the CurrentUser or LocalMachine personal store.
   -ConfigPath <file>             config.json with tenantId and servicePrincipal settings.
-  -ExcelPath <folder|file.xlsx>  Folder: writes PowerBI-Lineage_DDMMYYHHMM.xlsx. File: replaced each run.
+  -ExcelPath <folder|file>       Folder: writes PowerBI-Lineage_DDMMYYHHMM.xlsx. A .xlsx or .csv file is replaced each run; .csv = CSV only.
   -OutputPath <folder>           Folder for the JSON. Default: the Excel file's folder, or Documents\Power BI Lineage.
   -WorkspaceId <id>,<id>         Only these workspaces.
   -SkipExcel                     JSON and CSV only.
@@ -1441,10 +1441,11 @@ Export-ModuleMember -Function ConvertFrom-LauncherArgument, Get-LauncherUsage
 .PARAMETER ExcelPath
     Where to write the Excel workbook: a folder, where each run writes PowerBI-Lineage_DDMMYYHHMM.xlsx (the run's
     local date and time), or a .xlsx file, which is replaced on every run. The CSV is named after the workbook.
+    A .csv file instead writes the CSV only, with no workbook (and no need for the ImportExcel module).
     Defaults to report-lineage.xlsx next to the JSON.
 
 .PARAMETER SkipExcel
-    Write the JSON only, e.g. where the ImportExcel module is not installed. Build the workbook later with
+    Write the JSON and CSV only, e.g. where the ImportExcel module is not installed. Build the workbook later with
     Export-PbiLineageWorkbook.ps1 -JsonPath <json> -ExcelPath <xlsx>.
 
 .PARAMETER TenantId
@@ -2375,11 +2376,11 @@ function Format-Count {
 }
 
 function Resolve-ExcelPath {
-    # A folder gets a workbook named after the run's local date and time; a .xlsx path is used as given.
+    # A folder gets a workbook named after the run's local date and time; a .xlsx or .csv path is used as given.
     param([string] $Path)
     $Path = $Path.Trim().Trim('"')
-    if ($Path -match '\.xlsx$') { return $Path }
-    if ((Split-Path -Leaf $Path) -match '\.[A-Za-z]{2,5}$') { throw "ExcelPath must be a folder or a .xlsx file: $Path" }
+    if ($Path -match '\.(xlsx|csv)$') { return $Path }
+    if ((Split-Path -Leaf $Path) -match '\.[A-Za-z]{2,5}$') { throw "ExcelPath must be a folder, a .xlsx file or a .csv file: $Path" }
     Join-Path $Path ('PowerBI-Lineage_{0:ddMMyyHHmm}.xlsx' -f (Get-Date))
 }
 
@@ -2397,6 +2398,8 @@ if ($Unattended -and -not $PSBoundParameters.ContainsKey('OutputPath')) {
 }
 
 if ($Interactive) { Read-InteractiveOption }
+# A .csv path asks for the CSV only.
+if ($ExcelPath -match '\.csv$') { $SkipExcel = [switch]$true }
 else { Write-RunMessage ''; Write-RunMessage 'Power BI report lineage' -Color Cyan }
 
 Start-RunProgress -TotalSteps 8
