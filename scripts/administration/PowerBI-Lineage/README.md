@@ -134,6 +134,10 @@ Use [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1): **on
 Nothing is copied to the runbook server. The whole tool is inside the file as compressed text (the long block of
 letters and digits at the bottom); it unpacks itself on the first run.
 
+It works with Orchestrator 2019, 2022 and 2025, whichever PowerShell the Run .NET Script activity uses (32-bit or
+64-bit Windows PowerShell, or the .NET 8 PowerShell of Orchestrator 2022 and 2025): the tool always runs in 64-bit
+Windows PowerShell.
+
 ### Add it to a runbook
 
 1. In **Runbook Designer**, create a runbook inside a folder.

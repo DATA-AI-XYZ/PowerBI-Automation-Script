@@ -102,7 +102,8 @@ return
 #>
 
 function Get-OtherModuleFolder {
-    # Windows PowerShell module folders for all users and the current user, in both 64-bit and 32-bit form.
+    # Windows PowerShell module folders for all users and the current user, in both 64-bit and 32-bit form, then
+    # the folders modules installed from PowerShell 7 go to (not PowerShell 7's own built-in modules).
     if (-not $env:SystemRoot) { return }
     $documents = [Environment]::GetFolderPath('MyDocuments')
     $programFiles = @($env:ProgramW6432, $env:ProgramFiles, ${env:ProgramFiles(x86)}) | Where-Object { $_ }
@@ -110,6 +111,8 @@ function Get-OtherModuleFolder {
         foreach ($root in $programFiles) { Join-Path $root 'WindowsPowerShell\Modules' }
         foreach ($system in 'System32', 'Sysnative', 'SysWOW64') { Join-Path $env:SystemRoot "$system\WindowsPowerShell\v1.0\Modules" }
         if ($documents) { Join-Path $documents 'WindowsPowerShell\Modules' }
+        foreach ($root in $programFiles) { Join-Path $root 'PowerShell\Modules' }
+        if ($documents) { Join-Path $documents 'PowerShell\Modules' }
     )
     $folders | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -Unique
 }
