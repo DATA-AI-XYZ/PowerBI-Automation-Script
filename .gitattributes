@@ -4,3 +4,4 @@
 *.bat -text
 *.ois_export -text
 *.Orchestrator.ps1 -text
+*.Orchestrator.V2.ps1 -text

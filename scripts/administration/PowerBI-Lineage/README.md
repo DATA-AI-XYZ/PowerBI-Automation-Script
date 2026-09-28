@@ -28,6 +28,7 @@ Each file is self-contained: download just the one you need.
 | Send it to someone by email | [`PowerBI-Lineage.zip`](PowerBI-Lineage.zip) (the same `.cmd`, zipped) | [1. Run it on your desktop](#1-run-it-on-your-desktop) |
 | Run it on a schedule, e.g. Task Scheduler, SQL Server Agent, UiPath or Control-M | [`PowerBI-Lineage.cmd`](PowerBI-Lineage.cmd) | [2. Run it unattended](#2-run-it-unattended) |
 | Run it in a System Center Orchestrator runbook | [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1) (paste into one activity) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
+| Review the Orchestrator script line by line before running it | [`PowerBI-Lineage.Orchestrator.V2.ps1`](PowerBI-Lineage.Orchestrator.V2.ps1) (the same script, nothing compressed) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
 
 To download a file on GitHub, open it and choose **Download raw file**.
 
@@ -133,6 +134,12 @@ On the machine that runs the job:
 Use [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1): **one file, pasted into one activity**.
 Nothing is copied to the runbook server. The whole tool is inside the file as compressed text (the long block of
 letters and digits at the bottom); it unpacks itself on the first run.
+
+To review exactly what runs, use [`PowerBI-Lineage.Orchestrator.V2.ps1`](PowerBI-Lineage.Orchestrator.V2.ps1) instead.
+It is the same script with every file of the tool written out as plain text rather than compressed, so there is
+nothing to decode: the settings and the run section are identical, and the files are listed in its header. It is
+larger (about 140 KB) and is pasted the same way. One line in each of two files starts with `'@`, which would end
+the block holding that file, so it is shown as `#~'@` and saved as `'@`.
 
 It works with Orchestrator 2019, 2022 and 2025, whichever PowerShell the Run .NET Script activity uses (32-bit or
 64-bit Windows PowerShell, or the .NET 8 PowerShell of Orchestrator 2022 and 2025): the tool always runs in 64-bit
