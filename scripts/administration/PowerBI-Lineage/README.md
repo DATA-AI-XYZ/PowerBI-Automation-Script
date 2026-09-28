@@ -139,7 +139,9 @@ To review exactly what runs, use [`PowerBI-Lineage.Orchestrator.V2.ps1`](PowerBI
 It is the same script with every file of the tool written out as plain text rather than compressed, so there is
 nothing to decode: the settings and the run section are identical, and the files are listed in its header. It is
 larger (about 140 KB) and is pasted the same way. One line in each of two files starts with `'@`, which would end
-the block holding that file, so it is shown as `#~'@` and saved as `'@`.
+the block holding that file, so it is shown as `#~'@` and saved as `'@`. For reviewers,
+[`PowerBI-Lineage.Orchestrator.V2.README.md`](PowerBI-Lineage.Orchestrator.V2.README.md) sets out what it connects
+to, what it writes, how it handles the secret, and how to check V2 against V1.
 
 It works with Orchestrator 2019, 2022 and 2025, whichever PowerShell the Run .NET Script activity uses (32-bit or
 64-bit Windows PowerShell, or the .NET 8 PowerShell of Orchestrator 2022 and 2025): the tool always runs in 64-bit
