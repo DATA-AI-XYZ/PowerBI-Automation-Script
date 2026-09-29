@@ -10,7 +10,7 @@ built into Windows.
 
 | Tool | Answers | Download |
 |---|---|---|
-| [**Power BI Report Lineage**](scripts/administration/PowerBI-Lineage/) | Which database, schema and table feeds every Power BI report, through which semantic model, table and gateway. Produces an Excel workbook with a sheet per workspace. | Desktop or scheduled: [`PowerBI-Lineage.cmd`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.cmd)<br>System Center Orchestrator: [`PowerBI-Lineage.Orchestrator.ps1`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.Orchestrator.ps1) (paste into one activity), or [`PowerBI-Lineage.Orchestrator.V2.ps1`](scripts/administration/PowerBI-Lineage/PowerBI-Lineage.Orchestrator.V2.ps1), the same script with nothing compressed, for review |
+| [**Power BI Report Lineage**](scripts/administration/PowerBI-Lineage/) | Which database, schema and table feeds every Power BI report, through which semantic model, table and gateway. Produces an Excel workbook with a sheet per workspace. | Desktop or scheduled: [`PowerBI-Lineage.cmd`](scripts/administration/PowerBI-Lineage/downloads/cmd/PowerBI-Lineage.cmd)<br>System Center Orchestrator: [`PowerBI-Lineage.Orchestrator.ps1`](scripts/administration/PowerBI-Lineage/downloads/orchestrator-v1/PowerBI-Lineage.Orchestrator.ps1) (paste into one activity), or [`PowerBI-Lineage.Orchestrator.V2.ps1`](scripts/administration/PowerBI-Lineage/downloads/orchestrator-v2/PowerBI-Lineage.Orchestrator.V2.ps1), the same script with nothing compressed, for review |
 
 ---
 

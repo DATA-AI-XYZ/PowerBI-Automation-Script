@@ -24,13 +24,16 @@ Each file is self-contained: download just the one you need.
 
 | I want to | Download | Instructions |
 |---|---|---|
-| Run it on my computer | [`PowerBI-Lineage.cmd`](PowerBI-Lineage.cmd) | [1. Run it on your desktop](#1-run-it-on-your-desktop) |
-| Send it to someone by email | [`PowerBI-Lineage.zip`](PowerBI-Lineage.zip) (the same `.cmd`, zipped) | [1. Run it on your desktop](#1-run-it-on-your-desktop) |
-| Run it on a schedule, e.g. Task Scheduler, SQL Server Agent, UiPath or Control-M | [`PowerBI-Lineage.cmd`](PowerBI-Lineage.cmd) | [2. Run it unattended](#2-run-it-unattended) |
-| Run it in a System Center Orchestrator runbook | [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1) (paste into one activity) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
-| Review the Orchestrator script line by line before running it | [`PowerBI-Lineage.Orchestrator.V2.ps1`](PowerBI-Lineage.Orchestrator.V2.ps1) (the same script, nothing compressed) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
+| Run it on my computer | [`PowerBI-Lineage.cmd`](downloads/cmd/PowerBI-Lineage.cmd) | [1. Run it on your desktop](#1-run-it-on-your-desktop) |
+| Send it to someone by email | [`PowerBI-Lineage.zip`](downloads/cmd/PowerBI-Lineage.zip) (the same `.cmd`, zipped) | [1. Run it on your desktop](#1-run-it-on-your-desktop) |
+| Run it on a schedule, e.g. Task Scheduler, SQL Server Agent, UiPath or Control-M | [`PowerBI-Lineage.cmd`](downloads/cmd/PowerBI-Lineage.cmd) | [2. Run it unattended](#2-run-it-unattended) |
+| Run it in a System Center Orchestrator runbook | [`PowerBI-Lineage.Orchestrator.ps1`](downloads/orchestrator-v1/PowerBI-Lineage.Orchestrator.ps1) (paste into one activity) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
+| Review the Orchestrator script line by line before running it | [`PowerBI-Lineage.Orchestrator.V2.ps1`](downloads/orchestrator-v2/PowerBI-Lineage.Orchestrator.V2.ps1) (the same script, nothing compressed) | [3. Run it in System Center Orchestrator](#3-run-it-in-system-center-orchestrator) |
 
 To download a file on GitHub, open it and choose **Download raw file**.
+
+Each download has its own folder with a README and detailed documentation. The code behind them is documented
+file by file in [docs](docs/README.md).
 
 ---
 
@@ -54,7 +57,7 @@ permissions that need admin consent.
 
 ## 1. Run it on your desktop
 
-1. Download [`PowerBI-Lineage.cmd`](PowerBI-Lineage.cmd).
+1. Download [`PowerBI-Lineage.cmd`](downloads/cmd/PowerBI-Lineage.cmd).
 2. Double-click it. If Windows warns about a downloaded file, choose **More info > Run anyway**.
 3. Answer three questions:
    - **How to sign in:** your own account (a sign-in window opens), or a service principal with a client secret
@@ -81,7 +84,7 @@ Nothing needs installing first:
 The tool's scripts are stored as plain text inside the `.cmd`: open it in Notepad to read exactly what it does.
 
 **Sending it to someone:** share `PowerBI-Lineage.cmd` through Teams, OneDrive or SharePoint. Email usually blocks
-`.cmd` files, so email [`PowerBI-Lineage.zip`](PowerBI-Lineage.zip) instead; the file inside can be double-clicked
+`.cmd` files, so email [`PowerBI-Lineage.zip`](downloads/cmd/PowerBI-Lineage.zip) instead; the file inside can be double-clicked
 without extracting it.
 
 ---
@@ -131,16 +134,16 @@ On the machine that runs the job:
 
 ## 3. Run it in System Center Orchestrator
 
-Use [`PowerBI-Lineage.Orchestrator.ps1`](PowerBI-Lineage.Orchestrator.ps1): **one file, pasted into one activity**.
+Use [`PowerBI-Lineage.Orchestrator.ps1`](downloads/orchestrator-v1/PowerBI-Lineage.Orchestrator.ps1): **one file, pasted into one activity**.
 Nothing is copied to the runbook server. The whole tool is inside the file as compressed text (the long block of
 letters and digits at the bottom); it unpacks itself on the first run.
 
-To review exactly what runs, use [`PowerBI-Lineage.Orchestrator.V2.ps1`](PowerBI-Lineage.Orchestrator.V2.ps1) instead.
+To review exactly what runs, use [`PowerBI-Lineage.Orchestrator.V2.ps1`](downloads/orchestrator-v2/PowerBI-Lineage.Orchestrator.V2.ps1) instead.
 It is the same script with every file of the tool written out as plain text rather than compressed, so there is
 nothing to decode: the settings and the run section are identical, and the files are listed in its header. It is
 larger (about 140 KB) and is pasted the same way. One line in each of two files starts with `'@`, which would end
 the block holding that file, so it is shown as `#~'@` and saved as `'@`. For reviewers,
-[`PowerBI-Lineage.Orchestrator.V2.README.md`](PowerBI-Lineage.Orchestrator.V2.README.md) sets out what it connects
+[its README](downloads/orchestrator-v2/README.md) sets out what it connects
 to, what it writes, how it handles the secret, and how to check V2 against V1.
 
 It works with Orchestrator 2019, 2022 and 2025, whichever PowerShell the Run .NET Script activity uses (32-bit or
@@ -216,7 +219,7 @@ Windows PowerShell; delete the copy afterwards so the secret isn't left on disk.
 
 ### Alternative: import a ready-made runbook
 
-[`PowerBI-Lineage.ois_export`](PowerBI-Lineage.ois_export) contains the same script in a runbook, with each setting
+[`PowerBI-Lineage.ois_export`](downloads/runbook-import/PowerBI-Lineage.ois_export) contains the same script in a runbook, with each setting
 subscribed to an **Initialize Data** parameter (Tenant ID, App ID, Client secret, Excel path, Output format, and the
 other optional ones):
 
