@@ -29,18 +29,12 @@ environment variables.
 | `# ---- Unpack the tool once per version` | `$payload` here-string of base64 in lines of 100 characters, then step 5 and 6. |
 | `# ---- Run in 64-bit Windows PowerShell` | Steps 7 to 10. |
 
-The payload holds these files, each after a line `=====LINEAGE-FILE: <path>=====`:
+The payload holds the 8 files listed in **The files inside**, each after a line `=====LINEAGE-FILE: <path>=====`.
 
-| Unpacked path | Documentation |
-|---|---|
-| `src\modules\Prerequisites.psm1` | [Prerequisites.psm1](../../docs/Prerequisites.psm1/README.md) |
-| `src\modules\PowerBIRest.psm1` | [PowerBIRest.psm1](../../docs/PowerBIRest.psm1/README.md) |
-| `src\modules\MQueryLineage.psm1` | [MQueryLineage.psm1](../../docs/MQueryLineage.psm1/README.md) |
-| `src\modules\RunProgress.psm1` | [RunProgress.psm1](../../docs/RunProgress.psm1/README.md) |
-| `src\modules\LauncherArguments.psm1` | [LauncherArguments.psm1](../../docs/LauncherArguments.psm1/README.md) |
-| `src\Get-PbiReportLineage.ps1` | [Get-PbiReportLineage.ps1](../../docs/Get-PbiReportLineage.ps1/README.md) |
-| `src\Export-PbiLineageWorkbook.ps1` | [Export-PbiLineageWorkbook.ps1](../../docs/Export-PbiLineageWorkbook.ps1/README.md) |
-| `Invoke-LineageRun.ps1` | [Invoke-LineageRun.ps1](../../docs/Invoke-LineageRun.ps1/README.md) |
+<!-- shared:script -->
+## Script functions
+
+The Orchestrator script defines two functions of its own. Everything else it runs is in **The files inside**.
 
 ### Get-Setting
 
@@ -83,7 +77,7 @@ Patterns used:
 | `CertificateThumbprint` | `^[0-9A-Fa-f]{40}$` | Yes |
 | `TimeoutMinutes` | `^[0-9]{1,4}$` | Yes |
 
-### Environment passed to the child process
+### Environment passed to the run
 
 | Variable | Value |
 |---|---|
@@ -93,6 +87,29 @@ Patterns used:
 
 `$OutputFormat` and `$TimeoutMinutes` are not passed on: the format is carried by the `.xlsx` or `.csv` extension
 of `LINEAGE_EXCEL_PATH`, and the timeout is applied by this script.
+
+## Script errors
+
+| Case | Message or result |
+|---|---|
+| A setting missing or malformed | Thrown before anything is unpacked (see `Assert-Setting`). |
+| No secret and no certificate | `Set ClientSecret or CertificateThumbprint.` |
+| `$ExcelPath` ends in another extension of 2 to 5 letters | `The setting ExcelPath must be a folder, a .xlsx file or a .csv file: <path>` |
+| Tool exits non-zero | `Power BI lineage run failed: <reason> Log: <log path>`. The reason is standard error with `ERROR:` removed, or the last 5 non-empty output lines. |
+| Timeout | Process tree stopped; `Power BI lineage run did not finish within <n> minutes and was stopped. Log: <log path>` |
+| Log cannot be written | The log path in the message becomes `(log not written: <reason>)`. |
+
+`$ErrorActionPreference` is `Stop`, so any other error also fails the activity.
+
+## Script limits
+
+- A value must not contain a single quote: it would end the string.
+- A folder whose name ends in `.` and 2 to 5 letters, such as `bi.data`, is read as a file and refused.
+- `$TimeoutMinutes = '0'` passes the check and stops the run at once.
+- A run of a new version deletes older version folders without checking whether another run is using one.
+- The log is written only after the child process ends; there is no log while it runs.
+- A secret typed into the script is stored in the Orchestrator database as plain text. Subscribe to an encrypted variable, or use a certificate.
+<!-- /shared:script -->
 
 ## What it writes
 
@@ -105,19 +122,6 @@ of `LINEAGE_EXCEL_PATH`, and the timeout is applied by this script.
 | `$ExcelPath` with extension `.csv` | The CSV, written by the tool. | As above. |
 | `report-lineage-yyyyMMdd-HHmmss\` in the `$ExcelPath` folder | `report-lineage.json`. | Kept. |
 | The run account's PowerShell module folder | `MicrosoftPowerBIMgmt.Profile`, and `ImportExcel` unless CSV only, only if found in no module folder. | Permanent. |
-
-## Error handling
-
-| Case | Message or result |
-|---|---|
-| A setting missing or malformed | Thrown before anything is unpacked (see `Assert-Setting`). |
-| No secret and no certificate | `Set ClientSecret or CertificateThumbprint.` |
-| `$ExcelPath` ends in another extension of 2 to 5 letters | `The setting ExcelPath must be a folder, a .xlsx file or a .csv file: <path>` |
-| Tool exits non-zero | `Power BI lineage run failed: <reason> Log: <log path>`. The reason is standard error with `ERROR:` removed, or the last 5 non-empty output lines. |
-| Timeout | Process tree stopped; `Power BI lineage run did not finish within <n> minutes and was stopped. Log: <log path>` |
-| Log cannot be written | The log path in the message becomes `(log not written: <reason>)`. |
-
-`$ErrorActionPreference` is `Stop`, so any other error also fails the activity.
 
 ## How it is built
 
@@ -143,12 +147,139 @@ parse, or it contains a non-ASCII character or a backtick.
 - placeholder settings are read from `LINEAGE_*` and `PBI_CLIENT_SECRET`;
 - eight kinds of bad setting are refused before anything is unpacked.
 
-## Limits and notes
+## Limits of V1
 
-- A value must not contain a single quote: it would end the string.
-- A folder whose name ends in `.` and 2 to 5 letters, such as `bi.data`, is read as a file and refused.
-- `$TimeoutMinutes = '0'` passes the check and stops the run at once.
 - The version is a hash of the compressed bytes. Windows PowerShell and PowerShell 7 compress the same text to different bytes, so the same sources built on different hosts unpack to different folders.
-- A run of a new version deletes older version folders without checking whether another run is using one.
-- The log is written only after the child process ends; there is no log while it runs.
-- A secret typed into the script is stored in the Orchestrator database as plain text. Subscribe to an encrypted variable, or use a certificate.
+
+## Reading the compressed block
+
+V1 carries the same files as V2, gzip-compressed and base64-encoded. To read them, save V1 as
+`PowerBI-Lineage.Orchestrator.ps1` and run:
+
+```powershell
+$v1 = Get-Content .\PowerBI-Lineage.Orchestrator.ps1 -Raw
+$b64 = [regex]::Match($v1, "(?s)\`$payload = @'(.*?)'@").Groups[1].Value -replace '\s', ''
+$gzip = New-Object IO.Compression.GZipStream ([IO.MemoryStream][Convert]::FromBase64String($b64)), ([IO.Compression.CompressionMode]::Decompress)
+(New-Object IO.StreamReader $gzip).ReadToEnd() | Set-Content .\v1-decoded.txt
+```
+
+`v1-decoded.txt` holds the 8 files, each after a line `=====LINEAGE-FILE: <path>=====`. They match V2's blocks
+exactly. Outside the files, V1 and V2 differ only in the header note and the section that holds and saves them.
+
+<!-- shared:inside -->
+## The files inside
+
+The three Orchestrator downloads carry the 8 files below, word for word. `PowerBI-Lineage.cmd` carries 7 of them: all
+but `Invoke-LineageRun.ps1`. They are the tool's own code. They are **not** downloaded from anywhere: the download
+writes them to a local folder and runs them from there (see **How it works** in the README). They are not registered
+with PowerShell, so nothing else on the machine sees them.
+
+| File | What it does |
+|---|---|
+| `Invoke-LineageRun.ps1` | Orchestrator entry point. Reads the settings from environment variables, runs `Get-PbiReportLineage.ps1`, exits `0` on success or `1` with `ERROR: <message>`. Not in the `.cmd`. |
+| `src\Get-PbiReportLineage.ps1` | Main script. Signs in, lists workspaces and reports, reads each semantic model's tables and Power Query code, finds sources and gateways, writes the JSON and CSV, then runs `Export-PbiLineageWorkbook.ps1`. |
+| `src\Export-PbiLineageWorkbook.ps1` | Builds the Excel workbook from the JSON. |
+| `src\modules\Prerequisites.psm1` | Finds `MicrosoftPowerBIMgmt.Profile` and `ImportExcel`. Installs a missing one for the current user from the PowerShell Gallery (and the NuGet provider first, if missing). |
+| `src\modules\PowerBIRest.psm1` | Calls the Power BI REST API. Retries on HTTP 429 and 5xx. |
+| `src\modules\MQueryLineage.psm1` | Reads Power Query (M) code as text to find the server, database, schema and table. It parses the code; it never runs it. |
+| `src\modules\RunProgress.psm1` | The numbered steps and progress lines. |
+| `src\modules\LauncherArguments.psm1` | Reads the `.cmd` command line as literal values, never as code. Used only by the `.cmd`. |
+
+`Get-PbiReportLineage.ps1` loads the four modules with `Import-Module <path>` from the folder next to it.
+
+### Functions
+
+**`src\Get-PbiReportLineage.ps1`**
+
+| Function | Purpose |
+|---|---|
+| `Add-Issue` | Records a problem that does not stop the run (Issues sheet). |
+| `Get-StatusCode` | Reads the HTTP status from a failed call. |
+| `Save-Raw` | Saves a raw API response with `-SaveRawResponses`. |
+| `Get-WorkspacePath` | Builds the REST path for a workspace. |
+| `Resolve-ConfigSecret` | Reads the secret named in a config file (environment variable or Key Vault). |
+| `Read-MenuChoice`, `Read-RequiredValue`, `Read-InteractiveOption` | Ask the questions of an interactive run. |
+| `Connect-ServicePrincipal` | Signs in with a certificate or secret. |
+| `Connect-LineageSession` | Chooses and performs the sign-in. |
+| `Resolve-CollectionMode` | Chooses `Admin` or `User` (a test call to `admin/groups` when `Auto`). |
+| `New-LineageModel`, `New-ReportEntry` | Create the in-memory model and its report entries. |
+| `Get-AdminWorkspaceId` | Lists workspaces to scan (`GET admin/workspaces/modified`). |
+| `Get-AdminLineageModel` | Runs the admin scanner and builds the model. |
+| `Invoke-DaxQuery` | Runs one read-only `INFO.*` DAX query (`User` mode). |
+| `Get-UserDatasetDetail`, `Get-UserWorkspaceTarget`, `Read-UserReport`, `Read-UserDataset` | Collect workspaces, reports and models in `User` mode. |
+| `Format-Endpoint`, `Test-Unresolved`, `Select-Value` | Compare and pick server and database values. |
+| `Find-BoundDatasource` | Matches a parsed source to the model's data source and gateway. |
+| `Get-GatewayName`, `Get-GatewayDatasourceName` | Resolve gateway names. |
+| `Get-TableSource` | Finds the sources of one model table. |
+| `New-LineageRow`, `Get-LineageRow` | Build the lineage rows. |
+| `Get-SourceNote`, `Get-TableNote` | Build the `Notes` text. |
+| `Get-SourceObjectSummary` | Groups rows by source object. |
+| `New-LineageDocument` | Builds the JSON document. |
+| `Format-Count` | Singular or plural counts in messages. |
+| `Resolve-ExcelPath` | Turns the output path into a file name. |
+
+**`src\Export-PbiLineageWorkbook.ps1`**
+
+| Function | Purpose |
+|---|---|
+| `ConvertTo-CellText` | Converts a value to cell text; cuts text over Excel's 32,767-character limit. |
+| `ConvertTo-DataTable` | Builds a table from rows. |
+| `Get-SheetName` | Makes a valid, unique sheet name. |
+| `Add-DataSheet` | Adds a sheet and loads its rows. |
+| `Set-SheetLink` | Links a cell to another sheet. |
+| `Add-SummarySheet` | Writes the Summary sheet. |
+
+**`src\modules\Prerequisites.psm1`**
+
+| Function | Purpose |
+|---|---|
+| `Get-OtherModuleFolder`, `Add-OtherModuleFolder` | Also search the 32-bit and 64-bit Windows PowerShell module folders. |
+| `Find-RequiredModule` | Finds an installed module. |
+| `Initialize-RequiredModule` | Imports a module, installing it first only if it is missing. |
+
+**`src\modules\PowerBIRest.psm1`**
+
+| Function | Purpose |
+|---|---|
+| `Set-PbiApiBaseUrl` | Changes the API root (sovereign clouds). Not used by default. |
+| `Invoke-PbiRestMethod` | Calls one endpoint, with retries. |
+| `Get-PbiPagedValue` | Reads every page of a paged endpoint. |
+| `Invoke-PbiWorkspaceScan` | Runs the admin scanner in batches (`POST admin/workspaces/getInfo`, then `scanStatus`, `scanResult`). |
+
+**`src\modules\MQueryLineage.psm1`**
+
+| Function | Purpose |
+|---|---|
+| `Get-MQuerySource` | Entry point: the sources behind one Power Query expression. |
+| `Get-NativeQuerySource` | The sources behind a SQL query on a known connection. |
+| `Get-SqlReferencedObject` | Tables after `FROM`, `JOIN`, `EXEC` in SQL (a pattern match, not a SQL parser). |
+| `Get-MToken`, `Test-MSymbol`, `Test-MKeyword`, `Get-MTokenRange` | Split M code into tokens. |
+| `Split-MLetExpression` | Splits `let ... in ...` into steps. |
+| `Get-MCallArgument`, `ConvertFrom-MRecord`, `ConvertFrom-MStringLiteral` | Read arguments, records and text. |
+| `Get-MNavigationRecord`, `Set-MNavigation` | Read navigation such as `{[Schema="dbo",Item="Sales"]}`. |
+| `Test-MParameter`, `Resolve-MValue`, `Get-MReference` | Resolve parameters and references. |
+| `Get-MConnectorDefinition`, `New-MSourceFromCall` | Recognise a connector (`Sql.Database`, `Snowflake.Databases` and 41 more). |
+| `New-MSource`, `Copy-MSource` | Create source records. |
+| `Resolve-MStepSource`, `Resolve-MSharedSource`, `Resolve-MExpressionSource`, `Get-MSharedToken`, `Get-MSharedContext` | Follow steps and shared queries. |
+| `Get-MRefinedSourceType` | Refines the source type from the server name. |
+| `ConvertTo-MSourceObject` | Builds the output and sets `ObjectOrigin`. |
+
+**`src\modules\RunProgress.psm1`**
+
+| Function | Purpose |
+|---|---|
+| `Start-RunProgress` | Starts a run and picks console or plain output. |
+| `Start-RunStep`, `Update-RunStep`, `Complete-RunStep`, `Stop-RunStep`, `Show-RunStep` | Show one numbered step. |
+| `Write-RunMessage` | Writes a summary line. |
+| `Format-RunDuration`, `Format-RunStepLine`, `Get-ConsoleWidth`, `Get-RunElapsed` | Formatting and timing. |
+
+**`src\modules\LauncherArguments.psm1`**
+
+| Function | Purpose |
+|---|---|
+| `ConvertFrom-LauncherArgument` | Turns the command line into parameters; refuses anything that is not a literal value. |
+| `Get-LiteralArgumentValue` | Reads one literal value. |
+| `Get-LauncherUsage` | The `/?` help text. |
+
+`Invoke-LineageRun.ps1` has no functions.
+<!-- /shared:inside -->
