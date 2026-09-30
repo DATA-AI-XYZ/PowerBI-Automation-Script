@@ -7,13 +7,19 @@ there. Paste the whole file into one Run .NET Script activity.
 V2 is the version to review. Every line that runs is in this file as plain text (142 KB, plain ASCII). It does
 exactly what `PowerBI-Lineage.Orchestrator.ps1` (V1) does; V1 carries the same code compressed.
 
+V2 is too large to paste into a Run .NET Script activity: Orchestrator fails with "Error initializing extension"
+before any of it runs. So V2 is copied to the runbook server as a file, and the short
+`PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` (5 KB, plain text) is pasted into the activity. The launcher reads
+V2 from the file and runs it, exactly as if it had been pasted.
+
 ## How it works
 
 It is one self-contained script. Nothing is downloaded except, if missing, the two PowerShell modules below.
 
 ```mermaid
 flowchart TD
-    A["Orchestrator runs the pasted script<br/>(Run .NET Script activity)"] --> B["Read and check the settings"]
+    A["Orchestrator runs the pasted launcher<br/>(Run .NET Script activity)"] --> A2["Launcher reads V2 from its file on the server,<br/>checks its SHA-256 if set, and runs it<br/>with the settings as environment variables"]
+    A2 --> B["V2 reads and checks the settings"]
     B --> C{"Tool folder for this version<br/>already saved?"}
     C -- "No: first run of this version" --> D["Save the 8 files carried inside the script (plain text)<br/>to %ProgramData%\PowerBI-Lineage\version<br/>and delete older version folders"]
     C -- "Yes" --> E
@@ -30,7 +36,9 @@ flowchart TD
 
 Step by step:
 
-1. **Settings.** It reads the settings at the top (or their environment variables) and checks them.
+1. **Launcher.** The pasted launcher finds V2 at `$ScriptPath`, checks its SHA-256 if `$ScriptSha256` is set,
+   sets the other settings as environment variables of the activity's process, and runs V2's text. V2 reads the
+   settings from those variables (the settings inside the V2 file stay as placeholders) and checks them.
 2. **Save the tool's files.** The tool's 8 files are inside this script, as readable plain text. On the first run of this
    version it writes them to `%ProgramData%\PowerBI-Lineage\<version>\` (`<version>` is a 12-character hash of
    the files) and leaves a `.complete` marker. Later runs of the same version find the marker and reuse the files. A
@@ -58,22 +66,29 @@ because Orchestrator's own PowerShell is 32-bit (or PowerShell 7 in Orchestrator
 
 ## Run it
 
-1. In **Runbook Designer**, drag a **new Run .NET Script** activity from **Activities > System** onto a runbook.
+1. Copy `PowerBI-Lineage.Orchestrator.V2.ps1` to a folder on the runbook server, e.g. `D:\Tools\PowerBI-Lineage\`.
+   Do not edit it. Allow only administrators to change the folder.
+2. Optional: note its hash with `Get-FileHash D:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.V2.ps1`.
+3. In **Runbook Designer**, drag a **new Run .NET Script** activity from **Activities > System** onto a runbook.
    Set **Type** to **PowerShell**.
-2. Open the script in Notepad, select all, copy, and paste it into the **Script** box.
-3. Replace each `Required-...` placeholder at the top (see **Settings**).
-4. Check the runbook in and run it.
+4. Open `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` in Notepad, select all, copy, and paste it into the
+   **Script** box. Do not paste V2 itself: it is too large and fails with "Error initializing extension".
+5. At the top of the launcher, set `$ScriptPath` to the file's full path, `$ScriptSha256` to its hash (optional), and
+   replace each `Required-...` placeholder (see **Settings**).
+6. Check the runbook in and run it.
 
-It works with Orchestrator 2019, 2022 and 2025. To update, paste the new file over the whole script and fill in the
-settings again.
+It works with Orchestrator 2019, 2022 and 2025. To update, replace the file on the server (and `$ScriptSha256`); the
+launcher only needs pasting again when it changes.
 
 ## Settings
 
-Fill these in at the top of the script. Values go between the single quotes and must not contain a single quote. A
+Fill these in at the top of the launcher. Values go between the single quotes and must not contain a single quote. A
 setting left empty, or left as its `Required-...` placeholder, is read from the environment variable shown.
 
 | Setting | Required | Default | Environment variable | Value |
 |---|---|---|---|---|
+| `$ScriptPath` | Yes | | `LINEAGE_SCRIPT_PATH` | Full path of `PowerBI-Lineage.Orchestrator.V2.ps1` on the runbook server. |
+| `$ScriptSha256` | No | | | The file's SHA-256 (`Get-FileHash`). If set, the run stops when the file has changed. |
 | `$TenantId` | Yes | | `LINEAGE_TENANT_ID` | Tenant ID or domain, e.g. `contoso.onmicrosoft.com`. |
 | `$AppId` | Yes | | `LINEAGE_CLIENT_ID` | The service principal's application (client) ID. |
 | `$ClientSecret` | This or `$CertificateThumbprint` | | `PBI_CLIENT_SECRET` | The client secret. See **Keep the secret safe**. |
@@ -141,6 +156,7 @@ the activity's console output.
 
 | Location | What | Kept |
 |---|---|---|
+| The folder you chose, e.g. `D:\Tools\PowerBI-Lineage\` | `PowerBI-Lineage.Orchestrator.V2.ps1`, copied by you | Until you replace it |
 | `%ProgramData%\PowerBI-Lineage\<version>\` | The tool's 8 files and `.complete` | Until a different version runs |
 | `%TEMP%\PowerBI-Lineage-<run id>.out.txt`, `.err.txt` | The run's output while it runs | Deleted at the end of the run |
 | The `$ExcelPath` folder | The output files and a `.log` | Yours to manage |
@@ -150,7 +166,9 @@ the activity's console output.
 
 | Message or symptom | What to do |
 |---|---|
-| "Error initializing extension" | Drag a **new** Run .NET Script activity from **Activities > System**, set **Type** to **PowerShell** and paste again. |
+| "Error initializing extension" | V2 itself was pasted: paste the launcher instead. Otherwise drag a **new** Run .NET Script activity from **Activities > System**, set **Type** to **PowerShell** and paste the launcher again. |
+| "PowerBI-Lineage.Orchestrator.V2.ps1 was not found at ..." | Copy V2 to the server and check `$ScriptPath`. The Orchestrator Runbook Service account needs read access. |
+| "... has changed: its SHA-256 is ..." | The file differs from `$ScriptSha256`. Check where it came from, then update the hash or replace the file. |
 | "The setting ... is required" or "has an invalid value" | Replace every `Required-...` placeholder. `$AppId` must be a GUID; `$ExcelPath` a folder, `.xlsx` or `.csv`. |
 | "Could not install the ... module automatically" | The server cannot reach the PowerShell Gallery. Install the modules as in **Runbook server requirements**. |
 | "This service principal cannot use the Power BI admin APIs" | Check **Permissions it needs**, or set `$Mode = 'User'`. |
@@ -161,6 +179,7 @@ the activity's console output.
 
 | What you will see | Why |
 |---|---|
+| The launcher runs V2's text with `[scriptblock]::Create` | The same as pasting V2 into the activity. It runs only the file at `$ScriptPath`, and only after the SHA-256 check when `$ScriptSha256` is set. |
 | Eight blocks of code inside the script, each `$files['<path>'] = @' ... '@` | The tool's files, word for word, listed in the header. Nothing is compressed or encoded. |
 | Two lines shown as `#~'@` | A line starting with `'@` would end its block early (one each in `MQueryLineage.psm1` and `LauncherArguments.psm1`), so it is stored as `#~'@` and saved as `'@`. No other character is changed. |
 | Files written to `%ProgramData%` | See **How it works**, step 2. Everything written comes from inside this script. |
@@ -185,13 +204,16 @@ Query code, which can include SQL. No credentials and no report data.
 **Checking V2 against V1.** Only the header note and the section that holds and saves the files differ; the settings
 and the run section are identical. V1's compressed block decodes to the same files (see `documentation.md`).
 
-**Status.** Checked on PowerShell 7: it parses, and the files it saves are identical to the tool's source. Not yet
-run inside Orchestrator; make the first run in a test runbook.
+**Status.** Pasting V2 itself into an activity fails with "Error initializing extension" (it is too large); use the
+launcher. The launcher was checked on PowerShell 7: it runs V2 from the file, which saves files identical to the
+tool's source, and it refuses a missing file or a changed hash. Not yet run inside Orchestrator; make the first run
+in a test runbook.
 
 ## Files in this folder
 
 | File | What it is |
 |---|---|
-| `PowerBI-Lineage.Orchestrator.V2.ps1` | The script to paste. |
+| `PowerBI-Lineage.Orchestrator.V2.ps1` | The script. Copy it to the runbook server; do not paste it. |
+| `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` | The short script to paste into the activity. |
 | `README.md` | This page. |
 | [`documentation.md`](documentation.md) | The detail: the script section by section, its functions, the files inside and their functions, how it is built. |

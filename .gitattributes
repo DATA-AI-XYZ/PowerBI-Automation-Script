@@ -5,3 +5,4 @@
 *.ois_export -text
 *.Orchestrator.ps1 -text
 *.Orchestrator.V2.ps1 -text
+*.Orchestrator.V2.Launcher.ps1 -text

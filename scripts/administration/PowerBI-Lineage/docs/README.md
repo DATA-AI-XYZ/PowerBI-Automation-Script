@@ -15,7 +15,7 @@ What people download and run. Each download has its own folder.
 |---|---|---|
 | `PowerBI-Lineage.cmd`, `PowerBI-Lineage.zip` | Desktop and unattended runs: a launcher with every script embedded as plain text. The `.zip` holds the same `.cmd` for email. | [README](../downloads/cmd/README.md) · [Detail](../downloads/cmd/documentation.md) |
 | `PowerBI-Lineage.Orchestrator.ps1` | System Center Orchestrator, V1: one script pasted into a Run .NET Script activity, with the tool embedded as compressed text. | [README](../downloads/orchestrator-v1/README.md) · [Detail](../downloads/orchestrator-v1/documentation.md) |
-| `PowerBI-Lineage.Orchestrator.V2.ps1` | System Center Orchestrator, V2: the same script with the tool as plain text, for review. | [README](../downloads/orchestrator-v2/README.md) · [Detail](../downloads/orchestrator-v2/documentation.md) |
+| `PowerBI-Lineage.Orchestrator.V2.ps1`, `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` | System Center Orchestrator, V2: the same script with the tool as plain text. Too large to paste, so it is copied to the runbook server and the short launcher is pasted into the activity. | [README](../downloads/orchestrator-v2/README.md) · [Detail](../downloads/orchestrator-v2/documentation.md) |
 | `PowerBI-Lineage.ois_export` | The Orchestrator script in a runbook to import with Runbook Designer. | [README](../downloads/runbook-import/README.md) · [Detail](../downloads/runbook-import/documentation.md) |
 
 ## Source files

@@ -43,6 +43,58 @@ A single-quoted here-string ends at the first line that starts with `'@`. Two so
 of `MQueryLineage.psm1` and line 122 of `LauncherArguments.psm1`). They are embedded as `#~'@` and restored when
 saved.
 
+## The launcher
+
+V2 is about 142 KB. Pasted into a Run .NET Script activity, it fails with "Error initializing extension" before any
+of it runs, as any pasted script of that size does. So V2 is copied to the runbook server as a file, and
+`PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` (about 5 KB) is pasted into the activity instead.
+
+### Launcher flow
+
+1. Read `$ScriptPath`; if it is empty or a `Required-...` placeholder, read `LINEAGE_SCRIPT_PATH`. Throw if neither is set.
+2. Throw if no file exists at that path.
+3. Read the file's bytes. If `$ScriptSha256` is set, check it is 64 hex characters and that the file's SHA-256 matches it (either case).
+4. Decode the bytes as UTF-8 (dropping a byte order mark). Throw unless the text contains `POWER BI REPORT LINEAGE` and a line `$files = [ordered]@{}`, so only V2 is run.
+5. For each of the nine settings with a value (not empty, not a `Required-...` placeholder), set its environment variable in the activity's process, remembering the previous value.
+6. Run V2's text with `& ([scriptblock]::Create($text))`: the same as if V2 had been pasted. V2 reads its settings from those variables, because the settings inside the file are still placeholders.
+7. Restore every environment variable to its previous value, whether the run succeeded or failed. V2's output, or its error, becomes the activity's result.
+
+### Launcher settings
+
+| Setting | Environment variable set for V2 | Required |
+|---|---|---|
+| `$ScriptPath` | none (read from `LINEAGE_SCRIPT_PATH` when empty) | Yes |
+| `$ScriptSha256` | none | No |
+| `$TenantId` | `LINEAGE_TENANT_ID` | Yes |
+| `$AppId` | `LINEAGE_CLIENT_ID` | Yes |
+| `$ClientSecret` | `PBI_CLIENT_SECRET` | This or `$CertificateThumbprint` |
+| `$ExcelPath` | `LINEAGE_EXCEL_PATH` | Yes |
+| `$OutputFormat` | `LINEAGE_OUTPUT_FORMAT` | No |
+| `$Mode` | `LINEAGE_MODE` | No |
+| `$WorkspaceIds` | `LINEAGE_WORKSPACE_IDS` | No |
+| `$CertificateThumbprint` | `LINEAGE_CERTIFICATE_THUMBPRINT` | No |
+| `$TimeoutMinutes` | `LINEAGE_TIMEOUT_MINUTES` | No |
+
+A setting left empty in the launcher leaves any variable already set in the activity's environment in place. V2 then
+checks every setting as described in **Script functions**.
+
+### Launcher errors
+
+| Case | Message |
+|---|---|
+| No path | `The setting ScriptPath is required: the full path of PowerBI-Lineage.Orchestrator.V2.ps1 on this server.` |
+| No file | `PowerBI-Lineage.Orchestrator.V2.ps1 was not found at <path>. Copy it to the runbook server and check ScriptPath.` |
+| Bad hash setting | `The setting ScriptSha256 has an invalid value: <value>` |
+| File changed | `<path> has changed: its SHA-256 is <actual>, not <expected>. Check the file before running it.` |
+| Another file | `<path> is not PowerBI-Lineage.Orchestrator.V2.ps1.` |
+| V2 fails | V2's own error, unchanged (see **Script errors**). |
+
+### Launcher limits
+
+- The launcher trusts the file at `$ScriptPath`. Set `$ScriptSha256`, and allow only administrators to change the folder.
+- Settings are passed as environment variables of the activity's process for the length of the run, as V2 passes them to its own 64-bit process.
+- The launcher is plain ASCII with no backticks, like V1, and is well under the size Orchestrator accepts.
+
 <!-- shared:script -->
 ## Script functions
 
@@ -137,6 +189,10 @@ of `LINEAGE_EXCEL_PATH`, and the timeout is applied by this script.
 
 ## How it is built
 
+The launcher is `orchestrator/OrchestratorLauncherV2.ps1`, copied by `build/New-OrchestratorRunbook.ps1` with CRLF
+line endings after checking that it parses, is plain ASCII and has no backticks. The tests run it in a 32-bit host
+against a copy of V2, and check that a changed hash and a missing file are refused.
+
 `build/New-OrchestratorRunbook.ps1` builds V2 in the same run as V1, from the same template
 (`orchestrator/OrchestratorTool.ps1`) and the same 8 files:
 
@@ -161,7 +217,7 @@ The tests that run the script in 32-bit and 64-bit hosts use V1 only.
 
 - The file is about 142 KB and 3,021 lines. It contains 16 backticks on 12 lines, all in the embedded tool code.
 - V2's version is a hash of the file text; V1's is a hash of the compressed bytes. The same sources therefore unpack to different folders from V1 and V2, and running one deletes the other's folder.
-- No test runs V2 in an Orchestrator-like host; those tests use V1.
+- V2 cannot be pasted into an activity: it is too large. Use the launcher.
 
 ## Reading V1's compressed block
 

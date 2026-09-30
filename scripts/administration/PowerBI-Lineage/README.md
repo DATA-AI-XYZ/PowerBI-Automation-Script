@@ -141,7 +141,10 @@ letters and digits at the bottom); it unpacks itself on the first run.
 To review exactly what runs, use [`PowerBI-Lineage.Orchestrator.V2.ps1`](downloads/orchestrator-v2/PowerBI-Lineage.Orchestrator.V2.ps1) instead.
 It is the same script with every file of the tool written out as plain text rather than compressed, so there is
 nothing to decode: the settings and the run section are identical, and the files are listed in its header. It is
-larger (about 140 KB) and is pasted the same way. One line in each of two files starts with `'@`, which would end
+larger (about 140 KB), too large to paste into a Run .NET Script activity ("Error initializing extension"), so it
+is copied to the runbook server as a file and the short
+[`PowerBI-Lineage.Orchestrator.V2.Launcher.ps1`](downloads/orchestrator-v2/PowerBI-Lineage.Orchestrator.V2.Launcher.ps1)
+is pasted instead: it reads V2 from the file and runs it. One line in each of two files starts with `'@`, which would end
 the block holding that file, so it is shown as `#~'@` and saved as `'@`. For reviewers,
 [its README](downloads/orchestrator-v2/README.md) sets out what it connects
 to, what it writes, how it handles the secret, and how to check V2 against V1.
