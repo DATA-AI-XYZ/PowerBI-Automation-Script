@@ -9,6 +9,29 @@ files.
 
 It is one self-contained file. Nothing is downloaded except, if missing, the two PowerShell modules below.
 
+```mermaid
+flowchart TD
+    A["Double-click PowerBI-Lineage.cmd,<br/>or run it with arguments"] --> B["Batch section starts PowerShell 7,<br/>or 64-bit Windows PowerShell"]
+    B --> C["PowerShell runs the loader section<br/>of the same .cmd file"]
+    C --> D{"Tool folder for this version<br/>already saved?"}
+    D -- "No: first run of this version" --> E["Save the 7 files carried inside the .cmd<br/>to %LOCALAPPDATA%\PowerBI-Lineage\version<br/>and delete the other folders there"]
+    D -- "Yes" --> F
+    E --> F{"Arguments given?"}
+    F -- "Yes: unattended" --> G["Read them as plain values with the<br/>saved LauncherArguments.psm1"]
+    F -- "No: interactive" --> H["Ask three questions"]
+    G --> I["Saved Get-PbiReportLineage.ps1,<br/>in the same PowerShell"]
+    H --> I
+    I --> J["Import-Module the 4 saved modules<br/>from src\modules, by path"]
+    J --> K{"MicrosoftPowerBIMgmt.Profile and<br/>ImportExcel already installed?"}
+    K -- "No" --> L["Install the missing one for the current user<br/>from the PowerShell Gallery"]
+    K -- "Yes" --> M
+    L --> M["Sign in and read Power BI metadata<br/>login.microsoftonline.com, api.powerbi.com"]
+    M --> N["Write the JSON, CSV and workbook"]
+    N --> O["Exit 0, or 1 with ERROR: message<br/>(interactive runs pause)"]
+```
+
+Step by step:
+
 1. **Start PowerShell.** The top of the file is a short batch section. It starts PowerShell 7 if installed, otherwise
    64-bit Windows PowerShell, and has it run the loader section of this same file.
 2. **Save the tool's files.** The tool's 7 files are inside this file as plain text (open it in Notepad to read

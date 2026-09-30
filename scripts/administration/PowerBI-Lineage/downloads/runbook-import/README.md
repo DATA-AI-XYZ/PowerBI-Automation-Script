@@ -14,6 +14,26 @@ Orchestrator server. If it fails, paste the Orchestrator script into a new Run .
 
 It is one self-contained script. Nothing is downloaded except, if missing, the two PowerShell modules below.
 
+```mermaid
+flowchart TD
+    A["Initialize Data asks for the parameters"] --> A2["Run Power BI Lineage activity:<br/>the Orchestrator script"]
+    A2 --> B["Read and check the settings"]
+    B --> C{"Tool folder for this version<br/>already saved?"}
+    C -- "No: first run of this version" --> D["Save the 8 files carried inside the script (compressed)<br/>to %ProgramData%\PowerBI-Lineage\version<br/>and delete older version folders"]
+    C -- "Yes" --> E
+    D --> E["Start 64-bit Windows PowerShell on the saved<br/>Invoke-LineageRun.ps1 (settings as environment variables)"]
+    E --> F["Saved Get-PbiReportLineage.ps1"]
+    F --> G["Import-Module the 4 saved modules<br/>from src\modules, by path"]
+    G --> H{"MicrosoftPowerBIMgmt.Profile and<br/>ImportExcel already installed?"}
+    H -- "No" --> I["Install the missing one<br/>from the PowerShell Gallery"]
+    H -- "Yes" --> J
+    I --> J["Sign in and read Power BI metadata<br/>login.microsoftonline.com, api.powerbi.com"]
+    J --> K["Write the JSON, CSV and workbook"]
+    K --> L["Write the .log next to the output<br/>and end the activity: success or the error"]
+```
+
+Step by step:
+
 1. **Settings.** The runbook's **Initialize Data** activity asks for the parameters and passes them to the script's
    settings (an empty one falls back to its environment variable).
 2. **Save the tool's files.** The tool's 8 files are inside this script, gzip-compressed and base64-encoded. On the first run of this

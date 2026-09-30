@@ -10,6 +10,25 @@ The tool's code is compressed inside this script so the paste stays small (57 KB
 
 It is one self-contained script. Nothing is downloaded except, if missing, the two PowerShell modules below.
 
+```mermaid
+flowchart TD
+    A["Orchestrator runs the pasted script<br/>(Run .NET Script activity)"] --> B["Read and check the settings"]
+    B --> C{"Tool folder for this version<br/>already saved?"}
+    C -- "No: first run of this version" --> D["Save the 8 files carried inside the script (compressed)<br/>to %ProgramData%\PowerBI-Lineage\version<br/>and delete older version folders"]
+    C -- "Yes" --> E
+    D --> E["Start 64-bit Windows PowerShell on the saved<br/>Invoke-LineageRun.ps1 (settings as environment variables)"]
+    E --> F["Saved Get-PbiReportLineage.ps1"]
+    F --> G["Import-Module the 4 saved modules<br/>from src\modules, by path"]
+    G --> H{"MicrosoftPowerBIMgmt.Profile and<br/>ImportExcel already installed?"}
+    H -- "No" --> I["Install the missing one<br/>from the PowerShell Gallery"]
+    H -- "Yes" --> J
+    I --> J["Sign in and read Power BI metadata<br/>login.microsoftonline.com, api.powerbi.com"]
+    J --> K["Write the JSON, CSV and workbook"]
+    K --> L["Write the .log next to the output<br/>and end the activity: success or the error"]
+```
+
+Step by step:
+
 1. **Settings.** It reads the settings at the top (or their environment variables) and checks them.
 2. **Save the tool's files.** The tool's 8 files are inside this script, gzip-compressed and base64-encoded (the long block of letters and digits). On the first run of this
    version it writes them to `%ProgramData%\PowerBI-Lineage\<version>\` (`<version>` is a 12-character hash of
