@@ -12,6 +12,8 @@ before any of it runs. So V2 is copied to the runbook server as a file, and the 
 `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` (5 KB, plain text) is pasted into the activity. The launcher reads
 V2 from the file and runs it, exactly as if it had been pasted.
 
+To set it up, see [`SETUP.md`](SETUP.md).
+
 ## How it works
 
 It is one self-contained script. Nothing is downloaded except, if missing, the two PowerShell modules below.
@@ -223,5 +225,6 @@ large). The launcher also refuses a missing file or a changed hash.
 |---|---|
 | `PowerBI-Lineage.Orchestrator.V2.ps1` | The script. Copy it to the runbook server; do not paste it. |
 | `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` | The short script to paste into the activity. |
+| [`SETUP.md`](SETUP.md) | Setup in one page. |
 | `README.md` | This page. |
 | [`documentation.md`](documentation.md) | The detail: the script section by section, its functions, the files inside and their functions, how it is built. |
