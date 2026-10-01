@@ -87,6 +87,10 @@ setting left empty, or left as its `Required-...` placeholder, is read from the 
 
 Orchestrator stores activity scripts in its database in plain text. Instead of typing the secret:
 
+- **Subscribe, do not type.** Typing a variable's name between the quotes, such as `{ClientSecretVariable}`, is plain
+  text, not a subscription: the tool sends those characters as the secret and sign-in fails with
+  "One or more errors occurred.". A real subscription shows as a link in the script box.
+
 - create an **encrypted variable** in Runbook Designer, then select the text between the quotes of `$ClientSecret`,
   right-click, and choose **Subscribe > Variable**; or
 - leave `$ClientSecret` as its placeholder and use a certificate (`$CertificateThumbprint`), installed with its private
@@ -151,6 +155,7 @@ the activity's console output.
 |---|---|
 | "Error initializing extension" | Drag a **new** Run .NET Script activity from **Activities > System**, set **Type** to **PowerShell** and paste again. |
 | "The setting ... is required" or "has an invalid value" | Replace every `Required-...` placeholder. `$AppId` must be a GUID; `$ExcelPath` a folder, `.xlsx` or `.csv`. |
+| `[2/8] Signing in ... failed` with "One or more errors occurred." | The secret is typed rather than subscribed (see **Keep the secret safe**), or the secret, app ID or tenant ID is wrong or the secret has expired. |
 | "Could not install the ... module automatically" | The server cannot reach the PowerShell Gallery. Install the modules as in **Runbook server requirements**. |
 | "This service principal cannot use the Power BI admin APIs" | Check **Permissions it needs**, or set `$Mode = 'User'`. |
 | Rows noting "No table metadata returned" | Turn on the two **Enhance admin APIs responses** tenant settings. |

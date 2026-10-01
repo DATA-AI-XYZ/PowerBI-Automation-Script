@@ -218,6 +218,8 @@ The tests that run the script in 32-bit and 64-bit hosts use V1 only.
 - The file is about 142 KB and 3,021 lines. It contains 16 backticks on 12 lines, all in the embedded tool code.
 - V2's version is a hash of the file text; V1's is a hash of the compressed bytes. The same sources therefore unpack to different folders from V1 and V2, and running one deletes the other's folder.
 - V2 cannot be pasted into an activity: it is too large. Use the launcher.
+- Tested in System Center Orchestrator 2025 through the launcher, with V2 as a file on the runbook server.
+- A secret typed between the launcher's quotes, such as `{ClientSecretVariable}`, is sent as literal text and sign-in fails with "One or more errors occurred.". Subscribe it instead.
 
 ## Reading V1's compressed block
 

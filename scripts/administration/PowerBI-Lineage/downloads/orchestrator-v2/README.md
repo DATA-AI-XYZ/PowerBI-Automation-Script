@@ -67,22 +67,26 @@ because Orchestrator's own PowerShell is 32-bit (or PowerShell 7 in Orchestrator
 ## Run it
 
 1. Copy `PowerBI-Lineage.Orchestrator.V2.ps1` to a folder on the runbook server, e.g. `D:\Tools\PowerBI-Lineage\`.
-   Do not edit it. Allow only administrators to change the folder.
+   Do not edit it, and leave the settings inside it as placeholders. Allow only administrators to change the folder.
+   If it arrived as `.txt` (email often blocks `.ps1`), rename it to exactly `PowerBI-Lineage.Orchestrator.V2.ps1`
+   with **File Explorer > View > Show > File name extensions** on, so it does not end up as `...V2.ps1.txt`.
 2. Optional: note its hash with `Get-FileHash D:\Tools\PowerBI-Lineage\PowerBI-Lineage.Orchestrator.V2.ps1`.
 3. In **Runbook Designer**, drag a **new Run .NET Script** activity from **Activities > System** onto a runbook.
    Set **Type** to **PowerShell**.
 4. Open `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` in Notepad, select all, copy, and paste it into the
    **Script** box. Do not paste V2 itself: it is too large and fails with "Error initializing extension".
 5. At the top of the launcher, set `$ScriptPath` to the file's full path, `$ScriptSha256` to its hash (optional), and
-   replace each `Required-...` placeholder (see **Settings**).
+   replace each `Required-...` placeholder (see **Settings**). Subscribe the secret rather than typing it (see
+   **Keep the secret safe**).
 6. Check the runbook in and run it.
 
-It works with Orchestrator 2019, 2022 and 2025. To update, replace the file on the server (and `$ScriptSha256`); the
+Tested in System Center Orchestrator 2025; built for 2019 and 2022 as well, like V1. To update, replace the file on the server (and `$ScriptSha256`); the
 launcher only needs pasting again when it changes.
 
 ## Settings
 
-Fill these in at the top of the launcher. Values go between the single quotes and must not contain a single quote. A
+Fill these in at the top of the launcher. Values go between the quotes and must not contain a quote; with double
+quotes, a value must not contain `$` either. A
 setting left empty, or left as its `Required-...` placeholder, is read from the environment variable shown.
 
 | Setting | Required | Default | Environment variable | Value |
@@ -102,6 +106,10 @@ setting left empty, or left as its `Required-...` placeholder, is read from the 
 ## Keep the secret safe
 
 Orchestrator stores activity scripts in its database in plain text. Instead of typing the secret:
+
+- **Subscribe, do not type.** Typing a variable's name between the quotes, such as `{ClientSecretVariable}`, is plain
+  text, not a subscription: the tool sends those characters as the secret and sign-in fails with
+  "One or more errors occurred.". A real subscription shows as a link in the script box.
 
 - create an **encrypted variable** in Runbook Designer, then select the text between the quotes of `$ClientSecret`,
   right-click, and choose **Subscribe > Variable**; or
@@ -167,9 +175,10 @@ the activity's console output.
 | Message or symptom | What to do |
 |---|---|
 | "Error initializing extension" | V2 itself was pasted: paste the launcher instead. Otherwise drag a **new** Run .NET Script activity from **Activities > System**, set **Type** to **PowerShell** and paste the launcher again. |
-| "PowerBI-Lineage.Orchestrator.V2.ps1 was not found at ..." | Copy V2 to the server and check `$ScriptPath`. The Orchestrator Runbook Service account needs read access. |
+| "PowerBI-Lineage.Orchestrator.V2.ps1 was not found at ..." | Copy V2 to the runbook server (not the Runbook Designer machine) and check `$ScriptPath`. Check the name is exactly `PowerBI-Lineage.Orchestrator.V2.ps1`, not `.txt` or `.ps1.txt`. The Orchestrator Runbook Service account needs read access. |
 | "... has changed: its SHA-256 is ..." | The file differs from `$ScriptSha256`. Check where it came from, then update the hash or replace the file. |
 | "The setting ... is required" or "has an invalid value" | Replace every `Required-...` placeholder. `$AppId` must be a GUID; `$ExcelPath` a folder, `.xlsx` or `.csv`. |
+| `[2/8] Signing in ... failed` with "One or more errors occurred." | The secret is typed rather than subscribed (see **Keep the secret safe**), or the secret, app ID or tenant ID is wrong or the secret has expired. |
 | "Could not install the ... module automatically" | The server cannot reach the PowerShell Gallery. Install the modules as in **Runbook server requirements**. |
 | "This service principal cannot use the Power BI admin APIs" | Check **Permissions it needs**, or set `$Mode = 'User'`. |
 | Rows noting "No table metadata returned" | Turn on the two **Enhance admin APIs responses** tenant settings. |
@@ -204,10 +213,9 @@ Query code, which can include SQL. No credentials and no report data.
 **Checking V2 against V1.** Only the header note and the section that holds and saves the files differ; the settings
 and the run section are identical. V1's compressed block decodes to the same files (see `documentation.md`).
 
-**Status.** Pasting V2 itself into an activity fails with "Error initializing extension" (it is too large); use the
-launcher. The launcher was checked on PowerShell 7: it runs V2 from the file, which saves files identical to the
-tool's source, and it refuses a missing file or a changed hash. Not yet run inside Orchestrator; make the first run
-in a test runbook.
+**Status.** Tested in System Center Orchestrator 2025: the launcher pasted into a Run .NET Script activity runs V2 from
+a file on the runbook server, end to end. Pasting V2 itself fails with "Error initializing extension" (it is too
+large). The launcher also refuses a missing file or a changed hash.
 
 ## Files in this folder
 

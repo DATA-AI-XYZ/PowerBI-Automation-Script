@@ -92,6 +92,10 @@ A secret entered as the `Client secret` parameter is kept in the runbook's job h
 **Run Power BI Lineage** activity: select the `$ClientSecret` value, right-click, choose **Subscribe > Variable**, and
 pick an **encrypted variable**. Or use `Certificate thumbprint` instead. Keep activity-specific logging off.
 
+**Subscribe, do not type.** Typing a variable's name between the quotes, such as `{ClientSecretVariable}`, is plain
+text, not a subscription: the tool sends those characters as the secret and sign-in fails with
+"One or more errors occurred.". A real subscription shows as a link in the script box.
+
 ## Permissions it needs
 
 | Scope | Needs |
