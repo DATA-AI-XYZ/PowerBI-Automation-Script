@@ -2,8 +2,8 @@
 
 A Windows file you double-click, or run with arguments on a schedule. It lists, for every Power BI report, the
 semantic model, tables, and the server, database, schema and table behind them, with the gateway. It only reads from
-Power BI and changes nothing there. `PowerBI-Lineage.zip` holds the same `.cmd`, for email systems that block `.cmd`
-files.
+Power BI and changes nothing there. [`PowerBI-Lineage.zip`](PowerBI-Lineage.zip) holds everything in this folder in
+one download.
 
 ## How it works
 
@@ -156,6 +156,6 @@ File names above are for a folder as the output path, which gets new dated files
 | File | What it is |
 |---|---|
 | `PowerBI-Lineage.cmd` | The file to run. |
-| `PowerBI-Lineage.zip` | The same `.cmd`, zipped for email. The file inside can be double-clicked without extracting. |
+| [`PowerBI-Lineage.zip`](PowerBI-Lineage.zip) | Everything in this folder, in one download. The `.cmd` inside can be double-clicked without extracting. |
 | `README.md` | This page. |
 | [`documentation.md`](documentation.md) | The detail: the file section by section, the files inside and their functions, how it is built. |

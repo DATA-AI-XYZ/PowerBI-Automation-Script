@@ -2,7 +2,7 @@
 
 `PowerBI-Lineage.cmd` is a batch/PowerShell polyglot. `cmd.exe` runs the batch block at the top. PowerShell reads
 the same block as a `<# ... #>` comment and runs the loader below it. The loader unpacks the scripts stored at the
-bottom of the file and runs `Get-PbiReportLineage.ps1`. `PowerBI-Lineage.zip` holds only this file.
+bottom of the file and runs `Get-PbiReportLineage.ps1`. `PowerBI-Lineage.zip` holds this file with `README.md` and `documentation.md`.
 
 ## Flow
 
@@ -85,8 +85,9 @@ run folder.
 
 ## How it is built
 
-`build/New-LineageBundle.ps1` writes `PowerBI-Lineage.cmd` and `PowerBI-Lineage.zip` from the 7 files in `src/`
-listed above. By default it writes them to `downloads\cmd`; `-OutputFolder` writes them elsewhere.
+`build/New-LineageBundle.ps1` writes `PowerBI-Lineage.cmd` from the 7 files in `src/` listed above. By default it
+writes it to `downloads\cmd`; `-OutputFolder` writes it elsewhere. `build/New-DownloadZips.ps1` then zips the folder
+into `PowerBI-Lineage.zip`.
 
 The build:
 

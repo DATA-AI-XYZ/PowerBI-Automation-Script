@@ -166,5 +166,6 @@ the activity's console output.
 | File | What it is |
 |---|---|
 | `PowerBI-Lineage.Orchestrator.ps1` | The script to paste. |
+| [`PowerBI-Lineage.Orchestrator.zip`](PowerBI-Lineage.Orchestrator.zip) | Everything in this folder, in one download. |
 | `README.md` | This page. |
 | [`documentation.md`](documentation.md) | The detail: the script section by section, its functions, the files inside and their functions, how it is built. |

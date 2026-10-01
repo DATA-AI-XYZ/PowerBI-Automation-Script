@@ -5,6 +5,8 @@
 | `PowerBI-Lineage.Orchestrator.V2.ps1` | Copied to a folder on the **runbook server**. Not pasted, not edited. |
 | `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` | Pasted into the Run .NET Script activity. Your settings go here. |
 
+To get every file at once, download `PowerBI-Lineage.Orchestrator.V2.zip` from this folder.
+
 V2 is too large to paste (Orchestrator fails with "Error initializing extension"). The launcher reads V2 from the file
 and runs it.
 

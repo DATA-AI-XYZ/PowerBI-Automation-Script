@@ -225,6 +225,7 @@ large). The launcher also refuses a missing file or a changed hash.
 |---|---|
 | `PowerBI-Lineage.Orchestrator.V2.ps1` | The script. Copy it to the runbook server; do not paste it. |
 | `PowerBI-Lineage.Orchestrator.V2.Launcher.ps1` | The short script to paste into the activity. |
+| [`PowerBI-Lineage.Orchestrator.V2.zip`](PowerBI-Lineage.Orchestrator.V2.zip) | Everything in this folder, in one download. |
 | [`SETUP.md`](SETUP.md) | Setup in one page. |
 | `README.md` | This page. |
 | [`documentation.md`](documentation.md) | The detail: the script section by section, its functions, the files inside and their functions, how it is built. |

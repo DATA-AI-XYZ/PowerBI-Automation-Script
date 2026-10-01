@@ -150,5 +150,6 @@ Orchestrator runs also write `PowerBI-Lineage_DDMMYYHHMM.log` next to the output
 | File | What it is |
 |---|---|
 | `PowerBI-Lineage.ois_export` | The runbook to import. |
+| [`PowerBI-Lineage.RunbookImport.zip`](PowerBI-Lineage.RunbookImport.zip) | Everything in this folder, in one download. |
 | `README.md` | This page. |
 | [`documentation.md`](documentation.md) | The detail: the export's structure, the script inside, the files inside and their functions, how it is built. |
